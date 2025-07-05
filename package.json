@@ -1,0 +1,48 @@
+{
+  "name": "common-server",
+  "version": "1.0.0",
+  "main": "dist/server/index.js",
+  "scripts": {
+    "dev": "nodemon --watch server --ext ts --exec ts-node server/index.ts",
+    "build": "tsc",
+    "start": "node dist/server/index.js",
+    "db:generate": "drizzle-kit generate:pg",
+    "db:push": "drizzle-kit push:pg",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.1",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.0",
+    "drizzle-kit": "^0.31.4",
+    "drizzle-orm": "^0.44.2",
+    "drizzle-zod": "^0.8.2",
+    "express": "^5.1.0",
+    "express-session": "^1.18.1",
+    "multer": "^2.0.1",
+    "openai": "^5.8.2",
+    "pg": "^8.16.3",
+    "psql": "^0.0.1",
+    "ws": "^8.18.3",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/express-session": "^1.18.2",
+    "@types/multer": "^1.4.13",
+    "@types/node": "^24.0.7",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.6.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  },
+  "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977"
+}
