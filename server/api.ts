@@ -1,13 +1,8 @@
-import { Router } from "express";
+import express  from "express";
 import { registerRoutes } from "./routes";
 import { registerVoiceRoutes } from "./voice";
 
-export function createApiRouter(): Router {
-  const router = Router();
-  
+  const app = express();
   // Register all routes
-  registerRoutes(router);
-  registerVoiceRoutes(router);
-
-  return router;
-} 
+  registerRoutes(app);
+  registerVoiceRoutes(app);
