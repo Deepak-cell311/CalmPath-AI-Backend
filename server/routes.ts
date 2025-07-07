@@ -766,6 +766,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // ===================== AI Chat API for family ===================== //
+  app.post("/api/chat", isAuthenticated, async (req: Request, res: Response):Promise<any> => {
+    try {
+      const { message, conversationHistory } = req.body;
+      if (!message) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+
+      // Call your AI service (adjust as needed for your actual AI API)
+      const aiResult = await therapeuticAI.generateResponse(message, conversationHistory );
+
+      // Explicitly type photos as any[]
+      let photos: any[] = [];
+      const messageLower = message.toLowerCase();
+      if (
+        messageLower.includes("home") ||
+        messageLower.includes("house") ||
+        (messageLower.includes("miss") && messageLower.includes("home")) ||
+        messageLower.includes("wish i could see")
+      ) {
+        // Example: fetch memory photos with tags matching "home", "house", or "family"
+        const queryTags = ["home", "house", "family"];
+        const dbPhotos = await db.select().from(memoryPhotos);
+        photos = dbPhotos.filter(photo =>
+          Array.isArray(photo.tags) && photo.tags.some((tag: string) => queryTags.includes(tag.toLowerCase()))
+        );
+      }
+
+      res.json({
+        response: aiResult.message,
+        photos,
+      });
+    } catch (error: any) {
+      console.error("Error in /api/chat:", error);
+      res.status(500).json({ message: "Failed to get AI response", error: error.message });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
