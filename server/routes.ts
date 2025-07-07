@@ -487,8 +487,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============================ Analytics routes ==================== //
 
-  // This context helps the AI provide meaningful conversation about the photo
-
   
   // Get patient counts per status (e.g., anxious, ok, good)
   app.get("/api/analytics/status-counts", isAuthenticated, async (req, res) => {
@@ -766,7 +764,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // ===================== AI Chat API for family ===================== //
+  // ===================== AI Chat API ===================== //
   app.post("/api/chat", isAuthenticated, async (req: Request, res: Response):Promise<any> => {
     try {
       const { message, conversationHistory } = req.body;
@@ -774,10 +772,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Message is required" });
       }
 
-      // Call your AI service (adjust as needed for your actual AI API)
       const aiResult = await therapeuticAI.generateResponse(message, conversationHistory );
 
-      // Explicitly type photos as any[]
       let photos: any[] = [];
       const messageLower = message.toLowerCase();
       if (
@@ -786,7 +782,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (messageLower.includes("miss") && messageLower.includes("home")) ||
         messageLower.includes("wish i could see")
       ) {
-        // Example: fetch memory photos with tags matching "home", "house", or "family"
         const queryTags = ["home", "house", "family"];
         const dbPhotos = await db.select().from(memoryPhotos);
         photos = dbPhotos.filter(photo =>
