@@ -26,6 +26,7 @@ import {
   Alert as AlertType,
   patients,
   memoryPhotos,
+  facilities
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
@@ -75,7 +76,8 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use(cors(
     {
-      origin: 'https://calm-path-ai.vercel.app',
+      // origin: 'https://calm-path-ai.vercel.app',
+      origin: 'http://localhost:3000',
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       credentials: true
     }
@@ -539,6 +541,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     relationToPatient: z.string().optional(),
     patientAccessCode: z.string().optional(),
     facilityId: z.union([z.string(), z.number()]).optional(),
+    facilityName: z.string().optional(),
     age: z.number().optional(),
     roomNumber: z.string().optional(),
     care_level: z.string().optional(),
@@ -566,6 +569,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       relationToPatient,
       patientAccessCode,
       facilityId,
+      facilityName,
       roomNumber,
       care_level,
     } = parsed.data;
@@ -579,6 +583,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existing = await db.select().from(users).where(eq(users.phoneNumber, normalizedPhone));
       if (existing.length > 0) {
         return res.status(409).json({ message: "Phone number already registered" });
+      }
+
+      // Facility Staff logic
+      let facilityStaffFacilityId = null;
+      if (accountType === "Facility Staff") {
+        if (!facilityId || !facilityName) {
+          return res.status(400).json({ message: "Facility ID and Facility Name are required for Facility Staff" });
+        }
+        // Check if facility exists
+        let facilityRecord = await db.select().from(facilities).where(eq(facilities.id, String(facilityId)));
+        if (facilityRecord.length === 0) {
+          // Facility does not exist, create it
+          await db.insert(facilities).values({
+            id: String(facilityId),
+            name: facilityName,
+            // Add other required fields if needed
+          });
+        }
+        facilityStaffFacilityId = String(facilityId);
       }
 
       // Base user insert
@@ -600,7 +623,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 : "caregiver",
           relationToPatient: accountType === "Family Member" ? relationToPatient : null,
           patientAccessCode: accountType === "Family Member" ? patientAccessCode : null,
-          facilityStaffFacilityId: accountType === "Facility Staff" && facilityId != null ? String(facilityId) : null,
+          facilityStaffFacilityId: accountType === "Facility Staff" ? facilityStaffFacilityId : null,
           isActive: true,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -609,9 +632,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // If patient, insert into patients table
       if (accountType === "Patient") {
-        // if (typeof age !== "number") {
-        //   return res.status(400).json({ message: "Age is required for patients" });
-        // }
         // Only allow valid care_level values
         const validCareLevels = ["low", "medium", "high"];
         const patientData: any = {
