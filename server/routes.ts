@@ -76,8 +76,8 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use(cors(
     {
-      // origin: 'https://calm-path-ai.vercel.app',
-      origin: 'http://localhost:3000',
+      origin: 'https://calm-path-ai.vercel.app',
+      // origin: 'http://localhost:3000',
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       credentials: true
     }
