@@ -105,7 +105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/auth/user', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user.claims.sub;
+      const userId = req.user.id; // Use id from session user
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
