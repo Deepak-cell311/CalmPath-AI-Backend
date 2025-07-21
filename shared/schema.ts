@@ -203,6 +203,16 @@ export const alerts = pgTable("alerts", {
     createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const medications = pgTable("medications", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  name: varchar("name", { length: 255 }).notNull(),
+  dosage: varchar("dosage", { length: 100 }),
+  frequency: varchar("frequency", { length: 100 }),
+  time: varchar("time", { length: 100 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertPatientSchema = createInsertSchema(patients).omit({
     id: true,
@@ -231,6 +241,11 @@ export const insertAlertSchema = createInsertSchema(alerts).omit({
     createdAt: true,
 });
 
+export const insertMedicationSchema = createInsertSchema(medications).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type StaffNote = typeof staffNotes.$inferSelect;
 export type InsertStaffNote = z.infer<(typeof insertStaffNoteSchema) & ZodType<any, any, any>>;
 export type MoodLog = typeof moodLogs.$inferSelect;
@@ -239,6 +254,8 @@ export type TherapeuticPhoto = typeof therapeuticPhotos.$inferSelect;
 export type InsertTherapeuticPhoto = z.infer<(typeof insertTherapeuticPhotoSchema) & ZodType<any, any, any>>;
 export type Alert = typeof alerts.$inferSelect;
 export type InsertAlert = z.infer<(typeof insertAlertSchema) & ZodType<any, any, any>>;
+export type Medication = typeof medications.$inferSelect;
+export type InsertMedication = z.infer<(typeof insertMedicationSchema) & ZodType<any, any, any>>;
 
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<(typeof insertSessionSchema) & ZodType<any, any, any>>;

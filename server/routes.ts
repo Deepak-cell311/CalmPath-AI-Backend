@@ -26,7 +26,8 @@ import {
   Alert as AlertType,
   patients,
   memoryPhotos,
-  facilities
+  facilities,
+  insertMedicationSchema
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
@@ -76,8 +77,8 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use(cors(
     {
-      origin: 'https://calm-path-ai.vercel.app',
-      // origin: 'http://localhost:3000',
+      // origin: 'https://calm-path-ai.vercel.app',
+      origin: 'http://localhost:3000',
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       credentials: true
     }
@@ -94,7 +95,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     secret: "hello world", // use a strong secret in production!
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false } // set to true if using HTTPS
+    cookie: {
+      secure: false, // set to true if using HTTPS
+      sameSite: "lax"
+    }
   }));
 
   setupAuth(app);
@@ -816,6 +820,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error in /api/chat:", error);
       res.status(500).json({ message: "Failed to get AI response", error: error.message });
+    }
+  });
+
+  // Get all medications for a patient
+  app.get("/api/patients/:id/medications", isAuthenticated, async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const meds = await storage.getMedications(patientId);
+      res.json(meds);
+    } catch (error) {
+      console.error("Error fetching medications:", error);
+      res.status(500).json({ message: "Failed to fetch medications" });
+    }
+  });
+
+  // Add a new medication for a patient
+  app.post("/api/patients/:id/medications", isAuthenticated, async (req, res) => {
+    try {
+      const patientId = parseInt(req.params.id);
+      const validatedData = insertMedicationSchema.parse({ ...req.body, patientId });
+      const med = await storage.createMedication(validatedData);
+      res.json(med);
+    } catch (error) {
+      console.error("Error adding medication:", error);
+      res.status(400).json({ message: "Invalid medication data" });
+    }
+  });
+
+  // Delete a medication
+  app.delete("/api/medications/:id", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteMedication(id);
+      res.json({ message: "Medication deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting medication:", error);
+      res.status(500).json({ message: "Failed to delete medication" });
     }
   });
 

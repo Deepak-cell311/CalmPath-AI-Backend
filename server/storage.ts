@@ -20,6 +20,9 @@ import {
   alerts,
   type InsertAlert,
   type Alert,
+  medications,
+  type Medication,
+  type InsertMedication,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, sql } from "drizzle-orm";
@@ -50,6 +53,9 @@ export interface IStorage {
   getPatientsWithNoRecentActivity(hours: number): Promise<Patient[]>;
   createAlert(data: InsertAlert): Promise<Alert>;
   createMoodLog(data: InsertMoodLog): Promise<MoodLog>;
+  getMedications(patientId: number): Promise<Medication[]>;
+  createMedication(data: InsertMedication): Promise<Medication>;
+  deleteMedication(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -182,6 +188,19 @@ export class DatabaseStorage implements IStorage {
   async createMoodLog(data: InsertMoodLog): Promise<MoodLog> {
       const [log] = await db.insert(moodLogs).values(data).returning();
       return log;
+  }
+
+  async getMedications(patientId: number): Promise<Medication[]> {
+    return db.select().from(medications).where(eq(medications.patientId, patientId));
+  }
+
+  async createMedication(data: InsertMedication): Promise<Medication> {
+    const [med] = await db.insert(medications).values(data).returning();
+    return med;
+  }
+
+  async deleteMedication(id: number): Promise<void> {
+    await db.delete(medications).where(eq(medications.id, id));
   }
 }
 
