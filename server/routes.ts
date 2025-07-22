@@ -1,3 +1,4 @@
+import "dotenv/config"
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -77,8 +78,7 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use(cors(
     {
-      // origin: 'https://calm-path-ai.vercel.app',
-      origin: 'http://localhost:3000',
+      origin: `${process.env.API_URL}`,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
       credentials: true
     }
