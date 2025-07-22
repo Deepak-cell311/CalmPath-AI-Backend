@@ -76,11 +76,14 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // --- CORS: Allow credentials and set correct origin for production ---
   app.use(cors({
-    origin: `${process.env.API_URL}`,
+    origin: process.env.NODE_ENV === 'production'
+      ? `${process.env.API_URL}`
+      : (process.env.API_URL || 'http://localhost:3000'),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true
-  })); // Allow credentials for cross-origin cookies
+  }));
 
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
@@ -89,19 +92,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  // Serve static files from the uploads directory
 
 
+  // --- Session: Use secure cookies and correct SameSite for production ---
   app.use(session({
     secret: process.env.SESSION_SECRET || "hello world",
     resave: false,
     saveUninitialized: false,
     cookie: {
       secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      domain: process.env.NODE_ENV === "production" ? `${process.env.API_URL}` : undefined,
+      path: '/',
     }
   }));
 
   setupAuth(app);
 
   app.get('/api/auth/user', isAuthenticated, async (req: Request, res: Response) => {
+    console.log('Session user:', req.session.user); // Debug: log session user
     try {
       const userId = req.user.id; // Use id from session user
       const user = await storage.getUser(userId);
