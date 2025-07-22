@@ -76,13 +76,14 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.use(cors(
-    {
-      origin: `${process.env.API_URL}`,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-      credentials: true
-    }
-  )); // Allow all origins
+  // CORS configuration: Use exact frontend URL for production, fallback to localhost for development
+  app.use(cors({
+    origin: process.env.NODE_ENV === "production"
+      ?  `${process.env.API_URL}`
+      : "http://localhost:3000",
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    credentials: true
+  })); // Allow credentials for cross-origin cookies
 
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
