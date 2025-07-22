@@ -92,12 +92,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
   app.use(session({
-    secret: "hello world", // use a strong secret in production!
+    secret: process.env.SESSION_SECRET || "hello world",
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false, // set to true if using HTTPS
-      sameSite: "lax"
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
     }
   }));
 
