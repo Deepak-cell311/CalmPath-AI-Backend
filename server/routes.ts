@@ -9,7 +9,7 @@ import express, { Request, Response } from "express";
 import { createUser, getUserByEmail, User } from "./auth";
 import { setupAuth, isAuthenticated } from "./auth/middleware";
 import session from "express-session";
-import cors from "cors";
+import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import z from "zod";
 import { eq } from "drizzle-orm";
@@ -76,31 +76,26 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // --- CORS: Allow credentials and set correct origin for production ---
-  app.use(cors({
-    origin: ["https://calm-path-ai.vercel.app", "http://localhost:3000"],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    credentials: true
-  }));
 
+  // --- Session: Use secure cookies and correct SameSite for production ---
+  app.use(session({
+    store: new (connectPgSimple(session))({
+      conObject: {
+        connectionString: process.env.DATABASE_URL,
+      },
+      tableName: 'express_sessions',
+    }),
+    secret: "repair-request-secret", // use a strong secret in production!
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, sameSite: "lax" }
+  }));
+  
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
   app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  // Serve static files from the uploads directory
-
-
-  // --- Session: Use secure cookies and correct SameSite for production ---
-  app.use(session({
-    secret: process.env.SESSION_SECRET || "hello world",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: true,
-      sameSite: "none",
-      path: '/',
-    }
-  }));
 
   setupAuth(app);
 

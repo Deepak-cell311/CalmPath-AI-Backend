@@ -2,11 +2,31 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { registerVoiceRoutes } from "./voice";
 
 const app = express();
+
+// --- CORS: Allow credentials and set correct origin for production ---
+const allowedOrigins = [
+  "https://calm-path-ai.vercel.app", // <-- Your actual frontend domain
+  "http://localhost:3000"            // (optional) for local dev
+];
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
