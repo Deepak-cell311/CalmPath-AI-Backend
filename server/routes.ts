@@ -79,7 +79,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- CORS: Allow credentials and set correct origin for production ---
   app.use(cors({
     origin: process.env.NODE_ENV === 'production'
-      ? `${process.env.API_URL}`
+      ? `${process.env.API_URL}` 
       : (process.env.API_URL || 'http://localhost:3000'),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true
@@ -98,9 +98,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      domain: process.env.NODE_ENV === "production" ? `${process.env.API_URL}` : undefined,
+      secure: process.env.NODE_ENV === "production", // true in production (HTTPS required)
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // 'none' for cross-site cookies
+      domain: process.env.NODE_ENV === "production" ? ".yourfrontenddomain.com" : undefined, // <-- REPLACE if using subdomains
       path: '/',
     }
   }));
@@ -108,9 +108,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
 
   app.get('/api/auth/user', isAuthenticated, async (req: Request, res: Response) => {
-    console.log('Session user:', req.session.user); // Debug: log session user
     try {
-      const userId = req.user.id; // Use id from session user
+      const userId = req.user.id; 
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
