@@ -85,10 +85,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       },
       tableName: 'express_sessions',
     }),
-    secret: "repair-request-secret", // use a strong secret in production!
+    secret: "repair-request-secret",
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false, sameSite: "lax" }
+    cookie: { secure: true, sameSite: "none" }
   }));
   
   app.get("/api/health", (req, res) => {
@@ -419,6 +419,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching memory photos:", error);
       return res.status(500).json({ message: "Failed to fetch memory photos", error: error.message });
+    }
+  });
+
+  app.delete("/api/family/memoryPhotos/:id", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!id) {
+        return res.status(400).json({ message: "No id provided" });
+      }
+      // Find the photo to get the file path
+      const photo = await db.query.memoryPhotos.findFirst({ where: (photo, { eq }) => eq(photo.id, id) });
+      if (!photo) {
+        return res.status(404).json({ message: "Photo not found" });
+      }
+      // Delete from DB
+      await db.delete(memoryPhotos).where(eq(memoryPhotos.id, id));
+      // Delete file from disk
+      if (photo.file) {
+        const fs = require('fs');
+        const path = require('path');
+        const filePath = path.join(__dirname, '../uploads', path.basename(photo.file));
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+      return res.status(200).json({ message: "Photo deleted" });
+    } catch (error: any) {
+      console.error("Error deleting memory photo:", error);
+      return res.status(500).json({ message: "Failed to delete memory photo", error: error.message });
     }
   });
 
