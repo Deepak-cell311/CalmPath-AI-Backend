@@ -78,9 +78,7 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- CORS: Allow credentials and set correct origin for production ---
   app.use(cors({
-    origin: process.env.NODE_ENV === 'production'
-      ? `${process.env.API_URL}` 
-      : (process.env.API_URL || 'http://localhost:3000'),
+    origin:["https://calm-path-ai.vercel.app/", "http://localhost:3000"],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true
   }));
@@ -98,9 +96,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // true in production (HTTPS required)
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // 'none' for cross-site cookies
-      domain: process.env.NODE_ENV === "production" ? `${process.env.API_URL}` : undefined, // <-- REPLACE if using subdomains
+      secure: true,
+      sameSite: "none",
       path: '/',
     }
   }));
