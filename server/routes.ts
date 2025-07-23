@@ -78,7 +78,7 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- CORS: Allow credentials and set correct origin for production ---
   app.use(cors({
-    origin:["https://calm-path-ai.vercel.app/", "http://localhost:3000"],
+    origin: ["https://calm-path-ai.vercel.app", "http://localhost:3000"],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true
   }));
@@ -106,7 +106,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/auth/user', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user.id; 
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
@@ -399,7 +399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
   );
 
-  app.get("/api/family/memoryPhotos", isAuthenticated, async (req: Request, res: Response):Promise<any> => {
+  app.get("/api/family/memoryPhotos", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
     try {
       const uploadedBy = req.user?.claims?.sub;
 
@@ -407,7 +407,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const photos = await db
         .select()
         .from(memoryPhotos)
-        // .where(memoryPhotos.uploadedBy, "=", uploadedBy);
+      // .where(memoryPhotos.uploadedBy, "=", uploadedBy);
 
       // Format and return
       const formatted = photos.map((photo) => ({
@@ -494,7 +494,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============================ Analytics routes ==================== //
 
-  
+
   // Get patient counts per status (e.g., anxious, ok, good)
   app.get("/api/analytics/status-counts", isAuthenticated, async (req, res) => {
     try {
@@ -790,14 +790,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ===================== AI Chat API ===================== //
-  app.post("/api/chat", isAuthenticated, async (req: Request, res: Response):Promise<any> => {
+  app.post("/api/chat", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
     try {
       const { message, conversationHistory } = req.body;
       if (!message) {
         return res.status(400).json({ message: "Message is required" });
       }
 
-      const aiResult = await therapeuticAI.generateResponse(message, conversationHistory );
+      const aiResult = await therapeuticAI.generateResponse(message, conversationHistory);
 
       let photos: any[] = [];
       const messageLower = message.toLowerCase();
