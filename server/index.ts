@@ -3,11 +3,16 @@ dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
-import { registerRoutes } from "./routes";
+import { registerRoutes } from "../server/routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { registerVoiceRoutes } from "./voice";
+import webhookHandler from "./webhook";
+import stripeRoutes from "./stripe";
 
 const app = express();
+
+// Raw body for Stripe webhook
+app.use('/webhook', express.raw({ type: 'application/json' }));
 
 // --- CORS: Allow credentials and set correct origin for production ---
 const allowedOrigins = [
@@ -23,12 +28,14 @@ app.use(cors({
       return callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true,
+//   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
 }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use('/api/stripe', stripeRoutes);
+app.post('/webhook', webhookHandler as any);
 
 app.use((req, res, next) => {
   const start = Date.now();

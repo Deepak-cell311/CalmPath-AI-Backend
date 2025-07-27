@@ -40,6 +40,7 @@ export interface IStorage {
   createPatient(data: InsertPatient): Promise<Patient>;
   updatePatientStatus(id: number, status: string): Promise<Patient>;
   updatePatientInteraction(id: number): Promise<Patient>;
+  deletePatient(id: number): Promise<boolean>;
   getPatientNotes(patientId: number): Promise<StaffNote[]>;
   createStaffNote(data: InsertStaffNote): Promise<StaffNote>;
   getPatientMoodHistory(patientId: number, days: number): Promise<MoodLog[]>;
@@ -56,6 +57,11 @@ export interface IStorage {
   getMedications(patientId: number): Promise<Medication[]>;
   createMedication(data: InsertMedication): Promise<Medication>;
   deleteMedication(id: number): Promise<void>;
+  
+  // Stripe-related methods
+  updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void>;
+  updateUserStripeSubscriptionId(userId: string, stripeSubscriptionId: string): Promise<void>;
+  updateUserSubscriptionStatus(userId: string, status: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -111,6 +117,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(patients.id, id))
       .returning();
     return patient;
+  }
+
+  async deletePatient(id: number): Promise<boolean> {
+    const result = await db.delete(patients).where(eq(patients.id, id));
+    return result.rowCount ? result.rowCount > 0 : false;
   }
 
   async getPatientNotes(patientId: number): Promise<StaffNote[]> {
@@ -201,6 +212,33 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMedication(id: number): Promise<void> {
     await db.delete(medications).where(eq(medications.id, id));
+  }
+
+  // Stripe-related methods
+  async updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void> {
+    await db.update(users)
+      .set({ 
+        stripeCustomerId: stripeCustomerId,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async updateUserStripeSubscriptionId(userId: string, stripeSubscriptionId: string): Promise<void> {
+    await db.update(users)
+      .set({ 
+        stripeSubscriptionId: stripeSubscriptionId,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async updateUserSubscriptionStatus(userId: string, status: string): Promise<void> {
+    await db.update(users)
+      .set({ 
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId));
   }
 }
 

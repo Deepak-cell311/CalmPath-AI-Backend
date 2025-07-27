@@ -17,6 +17,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",
     "bcryptjs": "^3.0.2",
+    "body-parser": "^2.2.0",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.0.0",
@@ -29,10 +30,12 @@
     "openai": "^5.8.2",
     "pg": "^8.16.3",
     "psql": "^0.0.1",
+    "stripe": "^18.3.0",
     "ws": "^8.18.3",
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@types/body-parser": "^1.19.6",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
