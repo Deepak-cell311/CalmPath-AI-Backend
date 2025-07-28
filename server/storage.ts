@@ -23,6 +23,8 @@ import {
   medications,
   type Medication,
   type InsertMedication,
+  facilities,
+  type Facility,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, sql } from "drizzle-orm";
@@ -62,6 +64,10 @@ export interface IStorage {
   updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void>;
   updateUserStripeSubscriptionId(userId: string, stripeSubscriptionId: string): Promise<void>;
   updateUserSubscriptionStatus(userId: string, status: string): Promise<void>;
+  
+  // Facility management methods
+  getAllFacilities(): Promise<Facility[]>;
+  updateFacility(data: Partial<Facility>): Promise<Facility>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -239,6 +245,20 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(users.id, userId));
+  }
+
+  // Facility management methods
+  async getAllFacilities(): Promise<Facility[]> {
+    return db.select().from(facilities);
+  }
+
+  async updateFacility(data: Partial<Facility>): Promise<Facility> {
+    const [facility] = await db
+      .update(facilities)
+      .set(data)
+      .where(eq(facilities.id, data.id || ""))
+      .returning();
+    return facility;
   }
 }
 

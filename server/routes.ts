@@ -146,12 +146,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Create a new patient
     app.post("/api/patients",  async (req, res) => {
         try {
-            const validatedData = insertPatientSchema.parse(req.body);
+            // Handle the name field from frontend and split into firstName and lastName
+            const { name, ...otherData } = req.body;
+            
+            let firstName = "";
+            let lastName = "";
+            
+            if (name) {
+                const nameParts = name.trim().split(' ');
+                firstName = nameParts[0] || "";
+                lastName = nameParts.slice(1).join(' ') || "";
+            }
+            
+            // Create the data object with firstName and lastName
+            const patientData = {
+                firstName,
+                lastName,
+                ...otherData
+            };
+            
+            const validatedData = insertPatientSchema.parse(patientData);
             const patient = await storage.createPatient(validatedData);
             res.json(patient);
         } catch (error) {
             console.error("Error creating patient:", error);
             res.status(400).json({ message: "Invalid patient data" });
+        }
+    });
+
+    // Delete a patient by ID
+    app.delete("/api/patients/:id", async (req, res) => {
+        try {
+            const id = parseInt(req.params.id);
+            
+            if (isNaN(id)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            // Check if patient exists before deleting
+            const existingPatient = await storage.getPatient(id);
+            if (!existingPatient) {
+                res.status(404).json({ message: "Patient not found" });
+                return;
+            }
+
+            await storage.deletePatient(id);
+            res.json({ message: "Patient deleted successfully" });
+        } catch (error) {
+            console.error("Error deleting patient:", error);
+            res.status(500).json({ message: "Failed to delete patient" });
         }
     });
 
@@ -1337,6 +1381,153 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       
+
+    // ==================== Facility Management ====================== //
+
+    // Get facility information
+    app.get("/api/facility", async (req, res) => {
+        try {
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            res.json(facility || {});
+        } catch (error) {
+            console.error("Error fetching facility:", error);
+            res.status(500).json({ message: "Failed to fetch facility" });
+        }
+    });
+
+    // Update facility information
+    app.post("/api/facility", async (req, res) => {
+        try {
+            const { name, address, phone, email } = req.body;
+            const facility = await storage.updateFacility({
+                name,
+                address,
+                phone,
+                adminEmail: email,
+            });
+            res.json(facility);
+        } catch (error) {
+            console.error("Error updating facility:", error);
+            res.status(500).json({ message: "Failed to update facility" });
+        }
+    });
+
+    // Get facility billing settings
+    app.get("/api/facility/billing", async (req, res) => {
+        try {
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            res.json({
+                monthlyPrice: facility?.subscriptionTier === "premium" ? "25" : "15",
+                promoCode: facility?.promoCode || "",
+                stripePriceId: facility?.stripePriceId || "",
+                stripeCouponId: facility?.stripeCouponId || "",
+            });
+        } catch (error) {
+            console.error("Error fetching facility billing:", error);
+            res.status(500).json({ message: "Failed to fetch billing settings" });
+        }
+    });
+
+    // Update facility billing settings
+    app.post("/api/facility/billing", async (req, res) => {
+        try {
+            const { monthlyPrice, promoCode } = req.body;
+            
+            // Validate inputs
+            if (!monthlyPrice || isNaN(Number(monthlyPrice))) {
+                res.status(400).json({ message: "Invalid monthly price" });
+                return;
+            }
+
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            // Create or update Stripe product and price
+            let stripeProductId = facility.stripeProductId;
+            let stripePriceId = facility.stripePriceId;
+
+            if (!stripeProductId) {
+                // Create new Stripe product
+                const product = await stripe.products.create({
+                    name: `${facility.name} Subscription`,
+                    description: `Monthly subscription for ${facility.name}`,
+                    metadata: {
+                        facilityId: facility.id,
+                    },
+                });
+                stripeProductId = product.id;
+            }
+
+            // Create new price for the product
+            const price = await stripe.prices.create({
+                product: stripeProductId,
+                unit_amount: Number(monthlyPrice) * 100, // Convert to cents
+                currency: 'usd',
+                recurring: {
+                    interval: 'month',
+                },
+                metadata: {
+                    facilityId: facility.id,
+                },
+            });
+            stripePriceId = price.id;
+
+            // Create or update Stripe coupon if promo code provided
+            let stripeCouponId = null;
+            if (promoCode && promoCode.trim()) {
+                try {
+                    // Check if coupon already exists
+                    const existingCoupons = await stripe.coupons.list({ limit: 100 });
+                    const existingCoupon = existingCoupons.data.find(c => c.name === promoCode);
+                    
+                    if (existingCoupon) {
+                        stripeCouponId = existingCoupon.id;
+                    } else {
+                        // Create new coupon
+                        const coupon = await stripe.coupons.create({
+                            name: promoCode,
+                            percent_off: 100, // 100% off for free access
+                            duration: 'forever',
+                            metadata: {
+                                facilityId: facility.id,
+                            },
+                        });
+                        stripeCouponId = coupon.id;
+                    }
+                } catch (error) {
+                    console.error("Error creating Stripe coupon:", error);
+                }
+            }
+
+            // Update facility with new billing settings and Stripe IDs
+            const updatedFacility = await storage.updateFacility({
+                ...facility,
+                subscriptionTier: Number(monthlyPrice) >= 25 ? "premium" : "basic",
+                promoCode: promoCode || null,
+                stripeProductId: stripeProductId,
+                stripePriceId: stripePriceId,
+                stripeCouponId: stripeCouponId,
+            });
+
+            res.json({
+                message: "Billing settings updated successfully",
+                facility: updatedFacility,
+                stripePriceId: stripePriceId,
+            });
+        } catch (error) {
+            console.error("Error updating facility billing:", error);
+            res.status(500).json({ message: "Failed to update billing settings" });
+        }
+    });
+
+    // ==================== Patient Management ====================== //
 
     const httpServer = createServer(app);
     return httpServer;

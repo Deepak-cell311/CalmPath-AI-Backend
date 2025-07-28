@@ -106,6 +106,10 @@ export const facilities = pgTable("facilities", {
     subscriptionTier: varchar("subscription_tier", { enum: ["basic", "premium", "enterprise"] }).default("basic"),
     maxPatients: integer("max_patients").default(10),
     isActive: boolean("is_active").default(true),
+    promoCode: varchar("promo_code"),
+    stripeProductId: varchar("stripe_product_id"),
+    stripePriceId: varchar("stripe_price_id"),
+    stripeCouponId: varchar("stripe_coupon_id"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
 });
