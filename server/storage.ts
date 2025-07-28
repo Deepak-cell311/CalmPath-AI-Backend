@@ -25,9 +25,12 @@ import {
   type InsertMedication,
   facilities,
   type Facility,
+  reminders,
+  type Reminder,
+  type InsertReminder,
 } from "../shared/schema";
 import { db } from "./db";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { alias } from 'drizzle-orm/pg-core';
 
 // Interface for storage operations
@@ -59,6 +62,14 @@ export interface IStorage {
   getMedications(patientId: number): Promise<Medication[]>;
   createMedication(data: InsertMedication): Promise<Medication>;
   deleteMedication(id: number): Promise<void>;
+  
+  // Reminder operations
+  getPatientReminders(patientId: number): Promise<Reminder[]>;
+  createReminder(data: InsertReminder): Promise<Reminder>;
+  updateReminder(id: number, data: Partial<Reminder>): Promise<Reminder>;
+  deleteReminder(id: number): Promise<void>;
+  getActiveRemindersForPatient(patientId: number): Promise<Reminder[]>;
+  markReminderAsCompleted(id: number): Promise<void>;
   
   // Stripe-related methods
   updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void>;
@@ -218,6 +229,37 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMedication(id: number): Promise<void> {
     await db.delete(medications).where(eq(medications.id, id));
+  }
+
+  // Reminder operations
+  async getPatientReminders(patientId: number): Promise<Reminder[]> {
+    return db.select().from(reminders).where(eq(reminders.patientId, patientId));
+  }
+
+  async createReminder(data: InsertReminder): Promise<Reminder> {
+    const [reminder] = await db.insert(reminders).values(data).returning();
+    return reminder;
+  }
+
+  async updateReminder(id: number, data: Partial<Reminder>): Promise<Reminder> {
+    const [reminder] = await db
+      .update(reminders)
+      .set(data)
+      .where(eq(reminders.id, id))
+      .returning();
+    return reminder;
+  }
+
+  async deleteReminder(id: number): Promise<void> {
+    await db.delete(reminders).where(eq(reminders.id, id));
+  }
+
+  async getActiveRemindersForPatient(patientId: number): Promise<Reminder[]> {
+    return db.select().from(reminders).where(and(eq(reminders.patientId, patientId), eq(reminders.isCompleted, false)));
+  }
+
+  async markReminderAsCompleted(id: number): Promise<void> {
+    await db.update(reminders).set({ isCompleted: true }).where(eq(reminders.id, id));
   }
 
   // Stripe-related methods

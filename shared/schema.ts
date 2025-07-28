@@ -104,6 +104,7 @@ export const facilities = pgTable("facilities", {
     phone: varchar("phone"),
     adminEmail: varchar("admin_email"),
     subscriptionTier: varchar("subscription_tier", { enum: ["basic", "premium", "enterprise"] }).default("basic"),
+    monthlyPrice: varchar("monthly_price"), // Store the actual monthly price
     maxPatients: integer("max_patients").default(10),
     isActive: boolean("is_active").default(true),
     promoCode: varchar("promo_code"),
@@ -217,6 +218,19 @@ export const medications = pgTable("medications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const reminders = pgTable("reminders", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id), // family member who created the reminder
+  message: text("message").notNull(),
+  scheduledTime: timestamp("scheduled_time").notNull(),
+  isActive: boolean("is_active").default(true),
+  isCompleted: boolean("is_completed").default(false),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(), // FIXED
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertPatientSchema = createInsertSchema(patients).omit({
     id: true,
@@ -250,6 +264,12 @@ export const insertMedicationSchema = createInsertSchema(medications).omit({
   createdAt: true,
 });
 
+export const insertReminderSchema = createInsertSchema(reminders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type StaffNote = typeof staffNotes.$inferSelect;
 export type InsertStaffNote = z.infer<(typeof insertStaffNoteSchema) & ZodType<any, any, any>>;
 export type MoodLog = typeof moodLogs.$inferSelect;
@@ -260,6 +280,8 @@ export type Alert = typeof alerts.$inferSelect;
 export type InsertAlert = z.infer<(typeof insertAlertSchema) & ZodType<any, any, any>>;
 export type Medication = typeof medications.$inferSelect;
 export type InsertMedication = z.infer<(typeof insertMedicationSchema) & ZodType<any, any, any>>;
+export type Reminder = typeof reminders.$inferSelect;
+export type InsertReminder = z.infer<(typeof insertReminderSchema) & ZodType<any, any, any>>;
 
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<(typeof insertSessionSchema) & ZodType<any, any, any>>;

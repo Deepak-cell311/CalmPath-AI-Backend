@@ -15,6 +15,13 @@
       "when": 1751633924717,
       "tag": "0001_grey_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1753688274322,
+      "tag": "0002_mushy_quasar",
+      "breakpoints": true
     }
   ]
 }

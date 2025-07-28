@@ -1418,8 +1418,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
             const facilities = await storage.getAllFacilities();
             const facility = facilities[0]; // For now, get the first facility
+            
+            // Use the stored monthly price or fallback to tier-based calculation
+            let monthlyPrice = facility?.monthlyPrice || "25"; // default
+            if (!facility?.monthlyPrice) {
+                // Fallback to tier-based calculation if no price is stored
+                if (facility?.subscriptionTier === "basic") {
+                    monthlyPrice = "15";
+                } else if (facility?.subscriptionTier === "premium") {
+                    monthlyPrice = "25";
+                }
+            }
+            
             res.json({
-                monthlyPrice: facility?.subscriptionTier === "premium" ? "25" : "15",
+                monthlyPrice: monthlyPrice,
                 promoCode: facility?.promoCode || "",
                 stripePriceId: facility?.stripePriceId || "",
                 stripeCouponId: facility?.stripeCouponId || "",
@@ -1510,6 +1522,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const updatedFacility = await storage.updateFacility({
                 ...facility,
                 subscriptionTier: Number(monthlyPrice) >= 25 ? "premium" : "basic",
+                monthlyPrice: monthlyPrice, // Store the actual price
                 promoCode: promoCode || null,
                 stripeProductId: stripeProductId,
                 stripePriceId: stripePriceId,
@@ -1524,6 +1537,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error("Error updating facility billing:", error);
             res.status(500).json({ message: "Failed to update billing settings" });
+        }
+    });
+
+    // ==================== Reminder Management ====================== //
+
+    // Get all reminders for a patient
+    app.get("/api/patients/:id/reminders", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const reminders = await storage.getPatientReminders(patientId);
+            res.json(reminders);
+        } catch (error) {
+            console.error("Error fetching reminders:", error);
+            res.status(500).json({ message: "Failed to fetch reminders" });
+        }
+    });
+
+    // Create a new reminder for a patient
+    app.post("/api/patients/:id/reminders", async (req, res) => {
+        console.log("POST /api/patients/:id/reminders - Request received");
+        console.log("Patient ID:", req.params.id);
+        console.log("Request body:", req.body);
+        
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                console.log("Invalid patient ID:", req.params.id);
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const { message, scheduledTime, createdBy } = req.body;
+
+            // Validate inputs
+            if (!message || !scheduledTime || !createdBy) {
+                console.log("Missing required fields:", { message, scheduledTime, createdBy });
+                res.status(400).json({ message: "Missing required fields: message, scheduledTime, createdBy" });
+                return;
+            }
+
+            // Validate scheduled time is in the future
+            const scheduledDate = new Date(scheduledTime);
+            const now = new Date();
+            const MIN_FUTURE_MS = 60 * 1000; // 1 minute buffer
+            console.log('scheduledDate (UTC):', scheduledDate.toISOString());
+            console.log('now (UTC):', now.toISOString());
+            if (scheduledDate.getTime() <= now.getTime() + MIN_FUTURE_MS) {
+                console.log("Scheduled time is not at least 1 minute in the future:", scheduledDate);
+                res.status(400).json({ message: "Scheduled time must be at least 1 minute in the future" });
+                return;
+            }
+
+            console.log("Creating reminder with data:", { patientId, createdBy, message, scheduledTime: scheduledDate });
+            const reminder = await storage.createReminder({
+                patientId,
+                createdBy,
+                message,
+                scheduledTime: scheduledDate,
+            });
+
+            console.log("Reminder created successfully:", reminder);
+            res.status(201).json(reminder);
+        } catch (error) {
+            console.error("Error creating reminder:", error);
+            res.status(500).json({ message: "Failed to create reminder" });
+        }
+    });
+
+    // Update a reminder
+    app.put("/api/reminders/:id", async (req, res) => {
+        try {
+            const reminderId = parseInt(req.params.id);
+            if (isNaN(reminderId)) {
+                res.status(400).json({ message: "Invalid reminder ID" });
+                return;
+            }
+
+            const { message, scheduledTime, isActive } = req.body;
+            const updateData: any = {};
+
+            if (message !== undefined) updateData.message = message;
+            if (scheduledTime !== undefined) {
+                const scheduledDate = new Date(scheduledTime);
+                if (scheduledDate <= new Date()) {
+                    res.status(400).json({ message: "Scheduled time must be in the future" });
+                    return;
+                }
+                updateData.scheduledTime = scheduledDate;
+            }
+            if (isActive !== undefined) updateData.isActive = isActive;
+
+            updateData.updatedAt = new Date();
+
+            const reminder = await storage.updateReminder(reminderId, updateData);
+            res.json(reminder);
+        } catch (error) {
+            console.error("Error updating reminder:", error);
+            res.status(500).json({ message: "Failed to update reminder" });
+        }
+    });
+
+    // Delete a reminder
+    app.delete("/api/reminders/:id", async (req, res) => {
+        try {
+            const reminderId = parseInt(req.params.id);
+            if (isNaN(reminderId)) {
+                res.status(400).json({ message: "Invalid reminder ID" });
+                return;
+            }
+
+            await storage.deleteReminder(reminderId);
+            res.status(204).send();
+        } catch (error) {
+            console.error("Error deleting reminder:", error);
+            res.status(500).json({ message: "Failed to delete reminder" });
+        }
+    });
+
+    // Mark reminder as completed
+    app.post("/api/reminders/:id/complete", async (req, res) => {
+        try {
+            const reminderId = parseInt(req.params.id);
+            if (isNaN(reminderId)) {
+                res.status(400).json({ message: "Invalid reminder ID" });
+                return;
+            }
+
+            await storage.markReminderAsCompleted(reminderId);
+            res.json({ message: "Reminder marked as completed" });
+        } catch (error) {
+            console.error("Error completing reminder:", error);
+            res.status(500).json({ message: "Failed to complete reminder" });
+        }
+    });
+
+    // Get active reminders for a patient (for notifications)
+    app.get("/api/patients/:id/reminders/active", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const reminders = await storage.getActiveRemindersForPatient(patientId);
+            res.json(reminders);
+        } catch (error) {
+            console.error("Error fetching active reminders:", error);
+            res.status(500).json({ message: "Failed to fetch active reminders" });
         }
     });
 
