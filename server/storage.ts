@@ -78,6 +78,7 @@ export interface IStorage {
   
   // Facility management methods
   getAllFacilities(): Promise<Facility[]>;
+  createFacility(data: Partial<Facility>): Promise<Facility>;
   updateFacility(data: Partial<Facility>): Promise<Facility>;
 }
 
@@ -292,6 +293,11 @@ export class DatabaseStorage implements IStorage {
   // Facility management methods
   async getAllFacilities(): Promise<Facility[]> {
     return db.select().from(facilities);
+  }
+
+  async createFacility(data: Partial<Facility>): Promise<Facility> {
+    const [facility] = await db.insert(facilities).values(data as Facility).returning();
+    return facility;
   }
 
   async updateFacility(data: Partial<Facility>): Promise<Facility> {

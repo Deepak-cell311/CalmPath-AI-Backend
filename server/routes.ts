@@ -37,7 +37,7 @@ import { db } from "./db";
 
 declare module 'express-session' {
     interface SessionData {
-        user?: User;
+        user?: any; // Allow flexible user object for now
     }
 }
 
@@ -94,6 +94,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.get("/api/health", (req, res) => {
         res.json({ status: "ok" });
+    });
+
+    // Get current user
+    app.get("/api/user/me", async (req, res) => {
+        try {
+            // Get user from session if available
+            const userId = req.session?.user?.userId;
+            
+            if (userId) {
+                // Fetch user from database
+                const user = await storage.getUser(userId);
+                if (user) {
+                    res.json({
+                        id: user.id,
+                        firstName: user.firstName,
+                        lastName: user.lastName,
+                        email: user.email,
+                        role: user.role || "staff"
+                    });
+                    return;
+                }
+            }
+            
+            // If no user in session or user not found, return default staff user
+            // In a real app, you might redirect to login
+            const defaultUser = {
+                id: "1",
+                firstName: "Staff",
+                lastName: "Member",
+                email: "staff@calmpathai.com",
+                role: "staff"
+            };
+            res.json(defaultUser);
+        } catch (error) {
+            console.error("Error fetching user:", error);
+            res.status(500).json({ message: "Failed to fetch user" });
+        }
+    });
+
+    // Login endpoint
+    app.post("/api/auth/login", async (req, res) => {
+        try {
+            const { email, password } = req.body;
+            
+            if (!email || !password) {
+                res.status(400).json({ message: "Email and password are required" });
+                return;
+            }
+            
+            // Find user by email
+            const user = await getUserByEmail(email);
+            if (!user) {
+                res.status(401).json({ message: "Invalid credentials" });
+                return;
+            }
+            
+            // Check password
+            const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+            if (!isValidPassword) {
+                res.status(401).json({ message: "Invalid credentials" });
+                return;
+            }
+            
+            // Set session
+            req.session.user = {
+                userId: user.id,
+                email: user.email,
+                role: user.role
+            };
+            
+            res.json({
+                id: user.id,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                role: user.role
+            });
+        } catch (error) {
+            console.error("Error during login:", error);
+            res.status(500).json({ message: "Failed to login" });
+        }
+    });
+
+    // Create test user endpoint (for development only)
+    app.post("/api/auth/create-test-user", async (req, res) => {
+        try {
+            const { email, password, firstName, lastName } = req.body;
+            
+            if (!email || !password || !firstName || !lastName) {
+                res.status(400).json({ message: "Email, password, firstName, and lastName are required" });
+                return;
+            }
+            
+            // Hash password
+            const passwordHash = await bcrypt.hash(password, 10);
+            
+            // Create user
+            const user = await createUser(
+                email,
+                `${firstName} ${lastName}`,
+                'Facility Staff',
+                passwordHash
+            );
+            
+            res.json({
+                id: user.id,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                role: user.role
+            });
+        } catch (error) {
+            console.error("Error creating test user:", error);
+            res.status(500).json({ message: "Failed to create user" });
+        }
+    });
+
+    // Logout endpoint
+    app.post("/api/auth/logout", (req, res) => {
+        try {
+            // Destroy the session
+            req.session.destroy((err) => {
+                if (err) {
+                    console.error("Error destroying session:", err);
+                    res.status(500).json({ message: "Failed to logout" });
+                } else {
+                    res.json({ message: "Logged out successfully" });
+                }
+            });
+        } catch (error) {
+            console.error("Error during logout:", error);
+            res.status(500).json({ message: "Failed to logout" });
+        }
     });
 
     app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  // Serve static files from the uploads directory
@@ -832,7 +965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Get current user
     app.get('/api/auth/currentUser', (req, res) => {
-        const user = req.session?.user;
+        const user = req.session?.user as any;
 
         if (user) {
             res.json({
@@ -1388,7 +1521,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.get("/api/facility", async (req, res) => {
         try {
             const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            console.log("All facilities:", facilities);
+            let facility = facilities[0]; // For now, get the first facility
+            
+            // If no facility exists, create a default one
+            if (!facility) {
+                console.log("No facility found, creating default facility");
+                facility = await storage.createFacility({
+                    name: "Default Facility",
+                    address: "",
+                    phone: "",
+                    adminEmail: "",
+                    tagline: "",
+                    logoUrl: "",
+                    brandColor: "#3B82F6",
+                    monthlyPrice: "25",
+                    promoCode: "",
+                    subscriptionTier: "premium"
+                });
+                console.log("Created default facility:", facility);
+            }
+            
+            console.log("Selected facility:", facility);
             res.json(facility || {});
         } catch (error) {
             console.error("Error fetching facility:", error);
@@ -1399,18 +1553,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Update facility information
     app.post("/api/facility", async (req, res) => {
         try {
-            const { name, address, phone, email } = req.body;
-            const facility = await storage.updateFacility({
-                name,
-                address,
-                phone,
-                adminEmail: email,
-            });
+            const { id, name, address, phone, email, tagline, logoUrl, brandColor } = req.body;
+            console.log("Facility update request:", { id, name, address, phone, email, tagline, logoUrl, brandColor });
+            
+            let facility;
+            if (id) {
+                // Update existing facility
+                facility = await storage.updateFacility({
+                    id,
+                    name,
+                    address,
+                    phone,
+                    adminEmail: email,
+                    tagline,
+                    logoUrl,
+                    brandColor,
+                });
+            } else {
+                // Create new facility if no id provided
+                facility = await storage.createFacility({
+                    name,
+                    address,
+                    phone,
+                    adminEmail: email,
+                    tagline,
+                    logoUrl,
+                    brandColor,
+                    monthlyPrice: "25",
+                    promoCode: "",
+                    subscriptionTier: "premium"
+                });
+            }
+            
+            console.log("Facility updated/created successfully:", facility);
             res.json(facility);
         } catch (error) {
             console.error("Error updating facility:", error);
             res.status(500).json({ message: "Failed to update facility" });
         }
+    });
+
+    // Logo upload endpoint
+    app.post("/api/facility/logo", upload.single("logo"), (req, res): void => {
+        if (!req.file) {
+            res.status(400).json({ message: "No file uploaded" });
+            return;
+        }
+        // Return the URL to the uploaded file
+        const logoUrl = `/uploads/${req.file.filename}`;
+        res.json({ logoUrl });
     });
 
     // Get facility billing settings

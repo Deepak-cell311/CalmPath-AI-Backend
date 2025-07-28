@@ -113,6 +113,9 @@ export const facilities = pgTable("facilities", {
     stripeCouponId: varchar("stripe_coupon_id"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
+    tagline: varchar("tagline", { length: 255 }),
+    logoUrl: varchar("logo_url", { length: 255 }),
+    brandColor: varchar("brand_color", { length: 16 }),
 });
 
 export const patients = pgTable("patients", {
