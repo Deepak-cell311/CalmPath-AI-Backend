@@ -84,12 +84,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             conObject: {
                 connectionString: process.env.DATABASE_URL,
             },
-            tableName: 'express_sessions',
+            tableName: 'auth_sessions',
         }),
         secret: "repair-request-secret",
         resave: false,
         saveUninitialized: false,
-        cookie: { secure: true, sameSite: "none" }
+        cookie: { 
+            secure: process.env.NODE_ENV === 'production', 
+            sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax" 
+        }
     }));
 
     app.get("/api/health", (req, res) => {
@@ -133,49 +136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Login endpoint
-    app.post("/api/auth/login", async (req, res) => {
-        try {
-            const { email, password } = req.body;
-            
-            if (!email || !password) {
-                res.status(400).json({ message: "Email and password are required" });
-                return;
-            }
-            
-            // Find user by email
-            const user = await getUserByEmail(email);
-            if (!user) {
-                res.status(401).json({ message: "Invalid credentials" });
-                return;
-            }
-            
-            // Check password
-            const isValidPassword = await bcrypt.compare(password, user.passwordHash);
-            if (!isValidPassword) {
-                res.status(401).json({ message: "Invalid credentials" });
-                return;
-            }
-            
-            // Set session
-            req.session.user = {
-                userId: user.id,
-                email: user.email,
-                role: user.role
-            };
-            
-            res.json({
-                id: user.id,
-                firstName: user.firstName,
-                lastName: user.lastName,
-                email: user.email,
-                role: user.role
-            });
-        } catch (error) {
-            console.error("Error during login:", error);
-            res.status(500).json({ message: "Failed to login" });
-        }
-    });
+
 
     // Create test user endpoint (for development only)
     app.post("/api/auth/create-test-user", async (req, res) => {
@@ -233,10 +194,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     setupAuth(app);
 
-    app.get('/api/auth/user',  async (req: Request, res: Response) => {
+    app.get('/api/auth/user',  async (req: Request, res: Response):Promise<any> => {
         try {
-            const userId = req.user.id;
+            // Check if user is authenticated via session
+            if (!req.session?.user?.userId) {
+                return res.status(401).json({ message: "User not authenticated" });
+            }
+            
+            const userId = req.session.user.userId;
             const user = await storage.getUser(userId);
+            
+            if (!user) {
+                return res.status(404).json({ message: "User not found" });
+            }
+            
             res.json(user);
         } catch (error) {
             console.error("Error fetching user:", error);
