@@ -224,13 +224,55 @@ export const medications = pgTable("medications", {
 export const reminders = pgTable("reminders", {
   id: serial("id").primaryKey(),
   patientId: integer("patient_id").notNull().references(() => patients.id),
-  createdBy: varchar("created_by").notNull().references(() => users.id), // family member who created the reminder
+  createdBy: varchar("created_by"), // family member who created the reminder - made nullable to fix FK constraint
   message: text("message").notNull(),
   scheduledTime: timestamp("scheduled_time").notNull(),
   isActive: boolean("is_active").default(true),
   isCompleted: boolean("is_completed").default(false),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(), // FIXED
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Flat Payment Invite System Tables
+export const facilityInvitePackages = pgTable("facility_invite_packages", {
+  id: serial("id").primaryKey(),
+  facilityId: varchar("facility_id").notNull().references(() => facilities.id),
+  packageName: varchar("package_name", { length: 100 }).notNull(), // e.g. "10 Invites Package"
+  inviteCount: integer("invite_count").notNull(), // Number of invites in this package
+  priceInCents: integer("price_in_cents").notNull(), // Price in cents (e.g. 10000 for $100)
+  stripePriceId: varchar("stripe_price_id"), // Stripe price ID for this package
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const facilityInvitePurchases = pgTable("facility_invite_purchases", {
+  id: serial("id").primaryKey(),
+  facilityId: varchar("facility_id").notNull().references(() => facilities.id),
+  packageId: integer("package_id").notNull().references(() => facilityInvitePackages.id),
+  stripeSessionId: varchar("stripe_session_id"), // Stripe checkout session ID
+  stripePaymentIntentId: varchar("stripe_payment_intent_id"), // Stripe payment intent ID
+  totalPaidInCents: integer("total_paid_in_cents").notNull(),
+  inviteCount: integer("invite_count").notNull(), // Number of invites purchased
+  status: varchar("status", { enum: ["pending", "completed", "failed", "refunded"] }).default("pending"),
+  purchasedAt: timestamp("purchased_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const facilityInvites = pgTable("facility_invites", {
+  id: serial("id").primaryKey(),
+  facilityId: varchar("facility_id").notNull().references(() => facilities.id),
+  purchaseId: integer("purchase_id").notNull().references(() => facilityInvitePurchases.id),
+  inviteCode: varchar("invite_code", { length: 20 }).notNull().unique(), // Unique invite code
+  invitedEmail: varchar("invited_email"), // Email of the invited person
+  invitedPhone: varchar("invited_phone"), // Phone of the invited person
+  invitedName: varchar("invited_name", { length: 100 }), // Name of the invited person
+  status: varchar("status", { enum: ["unused", "used", "expired"] }).default("unused"),
+  usedByUserId: varchar("used_by_user_id").references(() => users.id), // Who used this invite
+  usedAt: timestamp("used_at"), // When the invite was used
+  expiresAt: timestamp("expires_at"), // When the invite expires
+  createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -302,3 +344,11 @@ export type Facility = typeof facilities.$inferSelect;
 export type InsertFacility = typeof facilities.$inferInsert;
 export type Patient = typeof patients.$inferSelect;
 export type InsertPatient = z.infer<(typeof insertPatientSchema) & ZodType<any, any, any>>;
+
+// Invite System Types
+export type FacilityInvitePackage = typeof facilityInvitePackages.$inferSelect;
+export type InsertFacilityInvitePackage = typeof facilityInvitePackages.$inferInsert;
+export type FacilityInvitePurchase = typeof facilityInvitePurchases.$inferSelect;
+export type InsertFacilityInvitePurchase = typeof facilityInvitePurchases.$inferInsert;
+export type FacilityInvite = typeof facilityInvites.$inferSelect;
+export type InsertFacilityInvite = typeof facilityInvites.$inferInsert;

@@ -29,7 +29,8 @@ import {
     patients,
     memoryPhotos,
     facilities,
-    insertMedicationSchema
+    insertMedicationSchema,
+    facilityInvitePurchases
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
@@ -1699,6 +1700,259 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error("Error updating facility billing:", error);
             res.status(500).json({ message: "Failed to update billing settings" });
+        }
+    });
+
+    // ==================== Flat Payment Invite System ====================== //
+
+    // Get available invite packages for a facility
+    app.get("/api/facility/invite-packages", async (req, res) => {
+        try {
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            // Get or create default packages for this facility
+            const packages = await storage.getFacilityInvitePackages(facility.id);
+            
+            // If no packages exist, create default ones
+            if (packages.length === 0) {
+                const defaultPackages = [
+                    { inviteCount: 10, priceInCents: 10000, packageName: "10 Invites Package" }, // $100
+                    { inviteCount: 25, priceInCents: 22500, packageName: "25 Invites Package" }, // $225
+                    { inviteCount: 50, priceInCents: 40000, packageName: "50 Invites Package" }, // $400
+                ];
+
+                for (const pkg of defaultPackages) {
+                    await storage.createFacilityInvitePackage({
+                        facilityId: facility.id,
+                        ...pkg
+                    });
+                }
+                
+                // Fetch the created packages
+                const createdPackages = await storage.getFacilityInvitePackages(facility.id);
+                res.json(createdPackages);
+            } else {
+                res.json(packages);
+            }
+        } catch (error) {
+            console.error("Error fetching invite packages:", error);
+            res.status(500).json({ message: "Failed to fetch invite packages" });
+        }
+    });
+
+    // Create Stripe checkout session for invite package purchase
+    app.post("/api/facility/purchase-invites", async (req, res) => {
+        try {
+            const { packageId } = req.body;
+            
+            if (!packageId) {
+                res.status(400).json({ message: "Package ID is required" });
+                return;
+            }
+
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            // Get the package details
+            const packageDetails = await storage.getFacilityInvitePackage(packageId);
+            if (!packageDetails) {
+                res.status(404).json({ message: "Package not found" });
+                return;
+            }
+
+            // Create Stripe checkout session
+            const sessionParams: Stripe.Checkout.SessionCreateParams = {
+                payment_method_types: ['card'],
+                line_items: [{
+                    price_data: {
+                        currency: 'usd',
+                        product_data: {
+                            name: packageDetails.packageName,
+                            description: `${packageDetails.inviteCount} invites for ${facility.name}`,
+                        },
+                        unit_amount: packageDetails.priceInCents,
+                    },
+                    quantity: 1,
+                }],
+                mode: 'payment',
+                success_url: `http://localhost:3000/dashboard/settings?success=true&package_id=${packageId}`,
+                cancel_url: `http://localhost:3000/dashboard/settings?canceled=true`,
+                metadata: {
+                    facilityId: facility.id,
+                    packageId: packageId.toString(),
+                    inviteCount: packageDetails.inviteCount.toString(),
+                    priceInCents: packageDetails.priceInCents.toString(),
+                },
+            };
+
+                        console.log('🛒 Creating Stripe checkout session with params:', JSON.stringify(sessionParams, null, 2));
+            
+            const session = await stripe.checkout.sessions.create(sessionParams);
+            console.log('✅ Stripe session created:', session.id);
+
+            // Create purchase record
+            const purchase = await storage.createFacilityInvitePurchase({
+              facilityId: facility.id,
+              packageId: packageId,
+              stripeSessionId: session.id,
+              totalPaidInCents: packageDetails.priceInCents,
+              inviteCount: packageDetails.inviteCount,
+              status: 'pending'
+            });
+            
+            console.log('📝 Purchase record created:', purchase.id);
+
+            res.json({ sessionId: session.id, url: session.url });
+        } catch (error) {
+            console.error("Error creating checkout session:", error);
+            res.status(500).json({ message: "Failed to create checkout session" });
+        }
+    });
+
+    // Get facility's invite purchases
+    app.get("/api/facility/invite-purchases", async (req, res) => {
+        try {
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            const purchases = await storage.getFacilityInvitePurchases(facility.id);
+            res.json(purchases);
+        } catch (error) {
+            console.error("Error fetching invite purchases:", error);
+            res.status(500).json({ message: "Failed to fetch invite purchases" });
+        }
+    });
+
+    // Get facility's available invites
+    app.get("/api/facility/available-invites", async (req, res) => {
+        try {
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            const invites = await storage.getFacilityAvailableInvites(facility.id);
+            res.json(invites);
+        } catch (error) {
+            console.error("Error fetching available invites:", error);
+            res.status(500).json({ message: "Failed to fetch available invites" });
+        }
+    });
+
+    // Create invite codes for a purchase
+    app.post("/api/facility/create-invites", async (req, res) => {
+        try {
+            const { purchaseId, inviteCount } = req.body;
+            
+            if (!purchaseId || !inviteCount) {
+                res.status(400).json({ message: "Purchase ID and invite count are required" });
+                return;
+            }
+
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            // Generate invite codes
+            const invites = await storage.createFacilityInvites(facility.id, purchaseId, inviteCount);
+            
+            res.json({ 
+                message: "Invites created successfully", 
+                invites: invites,
+                count: invites.length 
+            });
+        } catch (error) {
+            console.error("Error creating invites:", error);
+            res.status(500).json({ message: "Failed to create invites" });
+        }
+    });
+
+    // Manual webhook test endpoint (for development)
+    app.post("/api/facility/test-webhook", async (req, res) => {
+      try {
+        const { sessionId } = req.body;
+        
+        if (!sessionId) {
+          res.status(400).json({ message: "Session ID is required" });
+          return;
+        }
+
+        // Update the purchase status to completed manually
+        await db.update(facilityInvitePurchases )
+          .set({
+            status: 'completed',
+            completedAt: new Date()
+          })
+          .where(eq(facilityInvitePurchases.stripeSessionId, sessionId));
+        
+        console.log('✅ Manual webhook test: Purchase marked as completed for session:', sessionId);
+        res.json({ message: "Purchase status updated to completed" });
+      } catch (error) {
+        console.error("Error in manual webhook test:", error);
+        res.status(500).json({ message: "Failed to update purchase status" });
+      }
+    });
+
+    // Validate and use an invite code
+    app.post("/api/facility/use-invite", async (req, res) => {
+        try {
+            const { inviteCode, userEmail, userPhone, userName } = req.body;
+            
+            if (!inviteCode) {
+                res.status(400).json({ message: "Invite code is required" });
+                return;
+            }
+
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(404).json({ message: "Facility not found" });
+                return;
+            }
+
+            // Validate and use the invite
+            const result = await storage.useFacilityInvite(inviteCode, facility.id, {
+                email: userEmail,
+                phone: userPhone,
+                name: userName
+            });
+
+            if (result.success) {
+                res.json({ 
+                    message: "Invite used successfully", 
+                    facility: result.facility,
+                    user: result.user 
+                });
+            } else {
+                res.status(400).json({ message: result.message });
+            }
+        } catch (error) {
+            console.error("Error using invite:", error);
+            res.status(500).json({ message: "Failed to use invite" });
         }
     });
 

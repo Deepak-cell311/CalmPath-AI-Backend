@@ -28,6 +28,15 @@ import {
   reminders,
   type Reminder,
   type InsertReminder,
+  facilityInvitePackages,
+  type FacilityInvitePackage,
+  type InsertFacilityInvitePackage,
+  facilityInvitePurchases,
+  type FacilityInvitePurchase,
+  type InsertFacilityInvitePurchase,
+  facilityInvites,
+  type FacilityInvite,
+  type InsertFacilityInvite,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, and } from "drizzle-orm";
@@ -80,6 +89,16 @@ export interface IStorage {
   getAllFacilities(): Promise<Facility[]>;
   createFacility(data: Partial<Facility>): Promise<Facility>;
   updateFacility(data: Partial<Facility>): Promise<Facility>;
+  
+  // Invite system methods
+  getFacilityInvitePackages(facilityId: string): Promise<FacilityInvitePackage[]>;
+  getFacilityInvitePackage(packageId: number): Promise<FacilityInvitePackage | undefined>;
+  createFacilityInvitePackage(data: InsertFacilityInvitePackage): Promise<FacilityInvitePackage>;
+  getFacilityInvitePurchases(facilityId: string): Promise<FacilityInvitePurchase[]>;
+  createFacilityInvitePurchase(data: InsertFacilityInvitePurchase): Promise<FacilityInvitePurchase>;
+  getFacilityAvailableInvites(facilityId: string): Promise<FacilityInvite[]>;
+  createFacilityInvites(facilityId: string, purchaseId: number, inviteCount: number): Promise<FacilityInvite[]>;
+  useFacilityInvite(inviteCode: string, facilityId: string, userInfo: { email?: string; phone?: string; name?: string }): Promise<{ success: boolean; message?: string; facility?: Facility; user?: User }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -307,6 +326,159 @@ export class DatabaseStorage implements IStorage {
       .where(eq(facilities.id, data.id || ""))
       .returning();
     return facility;
+  }
+
+  // Invite system methods
+  async getFacilityInvitePackages(facilityId: string): Promise<FacilityInvitePackage[]> {
+    return db.select().from(facilityInvitePackages).where(eq(facilityInvitePackages.facilityId, facilityId));
+  }
+
+  async getFacilityInvitePackage(packageId: number): Promise<FacilityInvitePackage | undefined> {
+    const [pkg] = await db.select().from(facilityInvitePackages).where(eq(facilityInvitePackages.id, packageId));
+    return pkg;
+  }
+
+  async createFacilityInvitePackage(data: InsertFacilityInvitePackage): Promise<FacilityInvitePackage> {
+    const [pkg] = await db.insert(facilityInvitePackages).values(data).returning();
+    return pkg;
+  }
+
+  async getFacilityInvitePurchases(facilityId: string): Promise<FacilityInvitePurchase[]> {
+    return db.select().from(facilityInvitePurchases).where(eq(facilityInvitePurchases.facilityId, facilityId));
+  }
+
+  async createFacilityInvitePurchase(data: InsertFacilityInvitePurchase): Promise<FacilityInvitePurchase> {
+    const [purchase] = await db.insert(facilityInvitePurchases).values(data).returning();
+    return purchase;
+  }
+
+  async getFacilityAvailableInvites(facilityId: string): Promise<FacilityInvite[]> {
+    return db.select().from(facilityInvites).where(and(
+      eq(facilityInvites.facilityId, facilityId),
+      eq(facilityInvites.status, 'unused')
+    ));
+  }
+
+  async createFacilityInvites(facilityId: string, purchaseId: number, inviteCount: number): Promise<FacilityInvite[]> {
+    const invites: InsertFacilityInvite[] = [];
+    
+    for (let i = 0; i < inviteCount; i++) {
+      // Generate unique invite code
+      const inviteCode = this.generateInviteCode();
+      
+      invites.push({
+        facilityId,
+        purchaseId,
+        inviteCode,
+        status: 'unused',
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year expiry
+      });
+    }
+
+    const createdInvites = await db.insert(facilityInvites).values(invites).returning();
+    return createdInvites;
+  }
+
+  async useFacilityInvite(inviteCode: string, facilityId: string, userInfo: { email?: string; phone?: string; name?: string }): Promise<{ success: boolean; message?: string; facility?: Facility; user?: User }> {
+    try {
+      // Find the invite
+      const [invite] = await db.select().from(facilityInvites).where(eq(facilityInvites.inviteCode, inviteCode));
+      
+      if (!invite) {
+        return { success: false, message: "Invalid invite code" };
+      }
+
+      if (invite.status !== 'unused') {
+        return { success: false, message: "Invite code has already been used" };
+      }
+
+      if (invite.expiresAt && new Date() > invite.expiresAt) {
+        return { success: false, message: "Invite code has expired" };
+      }
+
+      if (invite.facilityId !== facilityId) {
+        return { success: false, message: "Invite code is not valid for this facility" };
+      }
+
+      // Get the facility
+      const [facility] = await db.select().from(facilities).where(eq(facilities.id, facilityId));
+      if (!facility) {
+        return { success: false, message: "Facility not found" };
+      }
+
+      // Create or get user
+      let user: User;
+      const userId = `invite_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      if (userInfo.email) {
+        // Try to find existing user by email
+        const [existingUser] = await db.select().from(users).where(eq(users.email, userInfo.email));
+        if (existingUser) {
+          user = existingUser;
+        } else {
+          // Create new user
+          const [newUser] = await db.insert(users).values({
+            id: userId,
+            email: userInfo.email,
+            firstName: userInfo.name?.split(' ')[0] || 'Invited',
+            lastName: userInfo.name?.split(' ').slice(1).join(' ') || 'User',
+            phoneNumber: userInfo.phone || '',
+            accountType: 'Patient',
+            role: 'patient',
+            passwordHash: 'invite_user', // Will need to be set properly when they sign up
+            isActive: true,
+          }).returning();
+          user = newUser;
+        }
+      } else if (userInfo.phone) {
+        // Try to find existing user by phone
+        const [existingUser] = await db.select().from(users).where(eq(users.phoneNumber, userInfo.phone));
+        if (existingUser) {
+          user = existingUser;
+        } else {
+          // Create new user
+          const [newUser] = await db.insert(users).values({
+            id: userId,
+            phoneNumber: userInfo.phone,
+            firstName: userInfo.name?.split(' ')[0] || 'Invited',
+            lastName: userInfo.name?.split(' ').slice(1).join(' ') || 'User',
+            accountType: 'Patient',
+            role: 'patient',
+            passwordHash: 'invite_user', // Will need to be set properly when they sign up
+            isActive: true,
+          }).returning();
+          user = newUser;
+        }
+      } else {
+        return { success: false, message: "Email or phone number is required" };
+      }
+
+      // Mark invite as used
+      await db.update(facilityInvites)
+        .set({
+          status: 'used',
+          usedByUserId: user.id,
+          usedAt: new Date(),
+          invitedEmail: userInfo.email,
+          invitedPhone: userInfo.phone,
+          invitedName: userInfo.name,
+        })
+        .where(eq(facilityInvites.id, invite.id));
+
+      return { success: true, facility, user };
+    } catch (error) {
+      console.error("Error using invite:", error);
+      return { success: false, message: "Failed to use invite" };
+    }
+  }
+
+  private generateInviteCode(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   }
 }
 

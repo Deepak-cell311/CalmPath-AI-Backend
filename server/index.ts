@@ -2,7 +2,7 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
-import cors from "cors";
+import cors, { CorsOptions } from "cors";
 import { registerRoutes } from "../server/routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { registerVoiceRoutes } from "./voice";
@@ -19,17 +19,33 @@ const allowedOrigins = [
   "https://calm-path-ai.vercel.app", // <-- Your actual frontend domain
   "http://localhost:3000"            // (optional) for local dev
 ];
-app.use(cors({
-  origin: function(origin, callback) {
+const corsOptions: CorsOptions = {
+  origin: function (origin: string | undefined, callback: any) {
+    if (!origin) return callback(null, true); // allow no-origin (e.g., mobile apps or curl)
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+};
+
+// Apply to all requests
+app.use(cors(corsOptions));
+
+// Respond to preflight (OPTIONS) requests
+app.options("*", cors(corsOptions));
+
+app.options("*", cors({
+  origin: function (origin, callback) {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+      callback(null, true);
     } else {
-      return callback(new Error("Not allowed by CORS"));
+      callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
 
 app.use(express.json());
