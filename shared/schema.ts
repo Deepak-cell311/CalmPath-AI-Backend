@@ -94,6 +94,7 @@ export const users = pgTable("users", {
     relationToPatient: varchar("relation_to_patient"), // for family members
     patientAccessCode: varchar("patient_access_code"), // for family members
     facilityStaffFacilityId: varchar("facility_staff_facility_id").references(() => facilities.id), // for facility staff
+    usedInviteCode: boolean("used_invite_code").default(false), // Track if user used an invite code
 });
 
 

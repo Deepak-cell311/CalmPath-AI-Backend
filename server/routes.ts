@@ -841,7 +841,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post('/api/auth/login', async (req, res) => {
         try {
-            const { accountType, email, password } = req.body;
+            const { accountType, email, password, inviteCode } = req.body;
 
             if (!email || !password || !accountType) {
                 res.status(400).json({ error: 'Email, password, and accountType are required' });
@@ -869,6 +869,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
+            // Handle invite code if provided
+            if (inviteCode && inviteCode.trim()) {
+                try {
+                    const facilities = await storage.getAllFacilities();
+                    const facility = facilities[0]; // For now, get the first facility
+                    
+                    if (!facility) {
+                        res.status(500).json({ error: 'No facility found' });
+                        return;
+                    }
+
+                    // Use the invite code
+                    const inviteResult = await storage.useFacilityInvite(inviteCode.trim(), facility.id, {
+                        email: user.email || undefined,
+                        phone: user.phoneNumber || undefined,
+                        name: `${user.firstName} ${user.lastName}`
+                    });
+
+                    if (!inviteResult.success) {
+                        res.status(400).json({ error: inviteResult.message || 'Invalid invite code' });
+                        return;
+                    }
+
+                    // Update user to mark that they used an invite code
+                    await db.update(users)
+                        .set({
+                            usedInviteCode: true,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(users.id, user.id));
+
+                    console.log("User used invite code successfully:", user.id);
+                } catch (error) {
+                    console.error('Error processing invite code:', error);
+                    res.status(500).json({ error: 'Failed to process invite code' });
+                    return;
+                }
+            }
+
             // Save session
             req.session.user = {
                 ...user,
@@ -883,7 +922,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     id: user.id,
                     email: user.email,
                     name: user.firstName,
-                    accountType: user.accountType
+                    accountType: user.accountType,
+                    usedInviteCode: user.usedInviteCode || false
                 }
             });
         } catch (error) {
@@ -936,16 +976,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get current user
-    app.get('/api/auth/currentUser', (req, res) => {
+    app.get('/api/auth/currentUser', async (req, res) => {
         const user = req.session?.user as any;
 
         if (user) {
-            res.json({
-                id: user.id,
-                email: user.email,
-                name: user.firstName,
-                accountType: user.accountType
-            });
+            // Fetch the latest user data from database to get the usedInviteCode status
+            try {
+                const currentUser = await storage.getUser(user.id);
+                res.json({
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: currentUser?.usedInviteCode || false
+                });
+            } catch (error) {
+                console.error("Error fetching current user:", error);
+                res.json({
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: false
+                });
+            }
         } else {
             res.status(401).json({ error: 'Not authenticated' });
         }
