@@ -1005,6 +1005,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
+    // Invite-based login (password-less)
+    app.post('/api/auth/invite-login', async (req, res) => {
+        try {
+            const { email, inviteCode, accountType } = req.body;
+
+            if (!email || !inviteCode || !accountType) {
+                res.status(400).json({ error: 'Email, inviteCode, and accountType are required' });
+                return;
+            }
+
+            // Find user by email
+            const user = await getUserByEmail(email);
+
+            if (!user) {
+                res.status(404).json({ error: 'User not found. Please sign up first.' });
+                return;
+            }
+
+            // Check account type match
+            if (user.accountType !== accountType) {
+                res.status(403).json({ error: 'Account type mismatch' });
+                return;
+            }
+
+            // Get facilities
+            const facilities = await storage.getAllFacilities();
+            const facility = facilities[0]; // For now, get the first facility
+            
+            if (!facility) {
+                res.status(500).json({ error: 'No facility found' });
+                return;
+            }
+
+            // Use the invite code
+            const inviteResult = await storage.useFacilityInvite(inviteCode.trim(), facility.id, {
+                email: user.email || undefined,
+                phone: user.phoneNumber || undefined,
+                name: `${user.firstName} ${user.lastName}`
+            });
+
+            if (!inviteResult.success) {
+                res.status(400).json({ error: inviteResult.message || 'Invalid invite code' });
+                return;
+            }
+
+            // Update user to mark that they used an invite code
+            await db.update(users)
+                .set({
+                    usedInviteCode: true,
+                    updatedAt: new Date()
+                })
+                .where(eq(users.id, user.id));
+
+            // Save session
+            req.session.user = {
+                ...user,
+                userId: user.id,
+            };
+
+            console.log("Invite login successful:", user.id);
+
+            res.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: true
+                }
+            });
+        } catch (error) {
+            console.error('Invite login error:', error);
+            res.status(500).json({ error: 'Invite login failed' });
+        }
+    });
+
     // Logout user (destroys session)
     app.post('/api/auth/logout', (req, res) => {
         req.session.destroy((err: any) => {
