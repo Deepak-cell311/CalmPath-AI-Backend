@@ -165,7 +165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resave: true, // Changed to true to ensure sessions are saved
         saveUninitialized: false,
         cookie: {
-            secure: false, // Disable for testing
+            secure: true, // Enable for cross-domain
             sameSite: "none", // Use none for cross-domain
             httpOnly: true,
             maxAge: 24 * 60 * 60 * 1000, // 24 hours
@@ -408,6 +408,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error('Error in session retrieval test:', error);
             res.status(500).json({ error: 'Session retrieval test failed' });
+        }
+    });
+    
+    // Test cookie setting
+    app.post("/api/debug/test-cookie", (req, res) => {
+        try {
+            console.log('Testing cookie setting');
+            
+            // Set a simple test cookie
+            res.cookie('test-cookie', 'test-value-' + Date.now(), {
+                httpOnly: true,
+                secure: true,
+                sameSite: 'none',
+                maxAge: 24 * 60 * 60 * 1000
+            });
+            
+            // Set session cookie manually
+            res.cookie('calmpath.sid', 'test-session-' + Date.now(), {
+                httpOnly: true,
+                secure: true,
+                sameSite: 'none',
+                maxAge: 24 * 60 * 60 * 1000
+            });
+            
+            res.json({
+                success: true,
+                message: 'Test cookies set',
+                timestamp: Date.now()
+            });
+        } catch (error) {
+            console.error('Error in cookie test:', error);
+            res.status(500).json({ error: 'Cookie test failed' });
+        }
+    });
+    
+    // Check cookies
+    app.get("/api/debug/check-cookies", (req, res) => {
+        try {
+            console.log('Checking cookies');
+            console.log('Request cookies:', req.headers.cookie);
+            
+            res.json({
+                requestCookies: req.headers.cookie,
+                sessionId: req.sessionID,
+                message: 'Cookie check completed'
+            });
+        } catch (error) {
+            console.error('Error in cookie check:', error);
+            res.status(500).json({ error: 'Cookie check failed' });
+        }
+    });
+    
+    // Token-based authentication (backup)
+    app.post("/api/auth/login-token", async (req, res) => {
+        try {
+            const { accountType, email, password, inviteCode } = req.body;
+
+            if (!email || !password || !accountType) {
+                res.status(400).json({ error: 'Email, password, and accountType are required' });
+                return;
+            }
+
+            // Find user
+            const user = await getUserByEmail(email);
+
+            if (!user) {
+                res.status(404).json({ error: 'User not found' });
+                return;
+            }
+
+            // Check account type match
+            if (user.accountType !== accountType) {
+                res.status(403).json({ error: 'Account type mismatch' });
+                return;
+            }
+
+            // Verify password
+            const isMatch = await bcrypt.compare(password, user.passwordHash);
+            if (!isMatch) {
+                res.status(401).json({ error: 'Invalid password' });
+                return;
+            }
+
+            // Generate a simple token
+            const token = Buffer.from(JSON.stringify({
+                userId: user.id,
+                email: user.email,
+                timestamp: Date.now()
+            })).toString('base64');
+
+            res.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: user.usedInviteCode || false
+                },
+                token: token
+            });
+        } catch (error) {
+            console.error('Token login error:', error);
+            res.status(500).json({ error: 'Login failed' });
         }
     });
     
