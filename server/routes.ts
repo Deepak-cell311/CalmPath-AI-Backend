@@ -361,16 +361,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
             }
 
-            // If no user in session or user not found, return default staff user
-            // In a real app, you might redirect to login
-            const defaultUser = {
-                id: "1",
-                firstName: "Staff",
-                lastName: "Member",
-                email: "staff@calmpathai.com",
-                role: "staff"
-            };
-            res.json(defaultUser);
+            // If no user in session or user not found, return 401
+            res.status(401).json({ message: "User not authenticated" });
         } catch (error) {
             console.error("Error fetching user:", error);
             res.status(500).json({ message: "Failed to fetch user" });
@@ -1235,28 +1227,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Get current user
     app.get('/api/auth/currentUser', async (req, res) => {
-        const user = req.session?.user as any;
+        const userId = req.session?.user?.userId;
 
-        if (user) {
+        if (userId) {
             // Fetch the latest user data from database to get the usedInviteCode status
             try {
-                const currentUser = await storage.getUser(user.id);
-                res.json({
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType,
-                    usedInviteCode: currentUser?.usedInviteCode || false
-                });
+                const currentUser = await storage.getUser(userId);
+                if (currentUser) {
+                    res.json({
+                        id: currentUser.id,
+                        email: currentUser.email,
+                        name: currentUser.firstName,
+                        accountType: currentUser.accountType,
+                        usedInviteCode: currentUser.usedInviteCode || false
+                    });
+                } else {
+                    res.status(404).json({ error: 'User not found in database' });
+                }
             } catch (error) {
                 console.error("Error fetching current user:", error);
-                res.json({
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType,
-                    usedInviteCode: false
-                });
+                res.status(500).json({ error: 'Failed to fetch user data' });
             }
         } else {
             res.status(401).json({ error: 'Not authenticated' });
