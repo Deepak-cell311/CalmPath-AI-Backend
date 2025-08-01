@@ -199,6 +199,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
     });
     
+    // Check sessions in database
+    app.get("/api/debug/sessions-in-db", async (req, res) => {
+        try {
+            const { Pool } = require('pg');
+            const pool = new Pool({
+                connectionString: process.env.DATABASE_URL,
+                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+            });
+            
+            const client = await pool.connect();
+            const result = await client.query(`
+                SELECT sid, sess, expire 
+                FROM auth_sessions 
+                ORDER BY expire DESC 
+                LIMIT 10
+            `);
+            
+            client.release();
+            await pool.end();
+            
+            res.json({
+                sessionCount: result.rows.length,
+                sessions: result.rows.map((row: any) => ({
+                    sid: row.sid,
+                    hasUser: !!row.sess?.user,
+                    userEmail: row.sess?.user?.email,
+                    expire: row.expire
+                }))
+            });
+        } catch (error: unknown) {
+            console.error('Error checking sessions in DB:', error);
+            res.status(500).json({ 
+                error: 'Failed to check sessions in DB', 
+                details: error instanceof Error ? error.message : 'Unknown error' 
+            });
+        }
+    });
+    
     // Test session storage
     app.post("/api/debug/test-session", (req, res) => {
         try {
@@ -208,15 +246,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 message: "Test session data"
             };
             
-            console.log('Setting test session with ID:', req.sessionID);
-            
             // Force save the session
             req.session.save((err) => {
                 if (err) {
                     console.error('Error saving test session:', err);
                     res.status(500).json({ error: 'Failed to save session', details: err.message });
                 } else {
-                    console.log('Test session saved successfully with ID:', req.sessionID);
+                    console.log('Test session saved successfully');
                     res.json({ 
                         success: true, 
                         sessionId: req.sessionID,
@@ -266,8 +302,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 details: error instanceof Error ? error.message : 'Unknown error' 
             });
         }
+        });
+    
+    // Test user session storage
+    app.post("/api/debug/test-user-session", (req, res) => {
+        try {
+            // Set a test user session
+            req.session.user = {
+                id: 'test-user-' + Date.now(),
+                email: 'test@example.com',
+                firstName: 'Test',
+                lastName: 'User',
+                accountType: 'Facility Staff',
+                userId: 'test-user-' + Date.now()
+            };
+            
+            console.log('Setting test user session with ID:', req.sessionID);
+            
+            // Force save the session
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving test user session:', err);
+                    res.status(500).json({ error: 'Failed to save session', details: err.message });
+                } else {
+                    console.log('Test user session saved successfully with ID:', req.sessionID);
+                    res.json({ 
+                        success: true, 
+                        sessionId: req.sessionID,
+                        user: req.session.user,
+                        message: 'Test user session saved'
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error in test user session route:', error);
+            res.status(500).json({ error: 'Test user session failed' });
+        }
     });
-
+    
     // Get current user
     app.get("/api/user/me", async (req, res) => {
         try {
@@ -1251,15 +1323,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
 
             console.log("Invite login successful:", user.id);
-
-            res.json({
-                success: true,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType,
-                    usedInviteCode: true
+            
+            // Force save the session and wait for it to complete
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving session:', err);
+                    res.status(500).json({ error: 'Failed to save session' });
+                } else {
+                    console.log('Session saved successfully');
+                    res.json({
+                        success: true,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            name: user.firstName,
+                            accountType: user.accountType,
+                            usedInviteCode: true
+                        }
+                    });
                 }
             });
         } catch (error) {
