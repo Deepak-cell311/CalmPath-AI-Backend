@@ -151,10 +151,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resave: true, // Changed to true to ensure sessions are saved
         saveUninitialized: false,
         cookie: {
-            secure: false, // Temporarily disable for testing
-            sameSite: "lax", // Temporarily use lax for testing
+            secure: false, // Disable for testing
+            sameSite: "lax", // Use lax for testing
             httpOnly: true,
-            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+            maxAge: 24 * 60 * 60 * 1000, // 24 hours
+            path: '/',
+            domain: undefined // Let browser set domain automatically
         },
         name: 'calmpath.sid'
     }));
@@ -212,6 +214,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             hasUser: !!req.session?.user,
             user: req.session?.user,
             cookie: req.session?.cookie,
+            requestCookies: req.headers.cookie,
             environment: {
                 NODE_ENV: process.env.NODE_ENV,
                 cookieSecure: process.env.NODE_ENV === 'production',
@@ -385,6 +388,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error('Error in session retrieval test:', error);
             res.status(500).json({ error: 'Session retrieval test failed' });
+        }
+    });
+    
+    // Set session manually for testing
+    app.post("/api/debug/set-session", (req, res) => {
+        try {
+            // Set a test session
+            req.session.user = {
+                id: 'test-manual-' + Date.now(),
+                email: 'test@example.com',
+                firstName: 'Test',
+                lastName: 'User',
+                accountType: 'Facility Staff',
+                userId: 'test-manual-' + Date.now()
+            };
+            
+            console.log('Manually setting session with ID:', req.sessionID);
+            console.log('Session data:', req.session.user);
+            
+            // Force save the session
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving manual session:', err);
+                    res.status(500).json({ error: 'Failed to save session', details: err.message });
+                } else {
+                    console.log('Manual session saved successfully with ID:', req.sessionID);
+                    res.json({ 
+                        success: true, 
+                        sessionId: req.sessionID,
+                        user: req.session.user,
+                        message: 'Manual session set successfully'
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error in manual session route:', error);
+            res.status(500).json({ error: 'Manual session failed' });
         }
     });
     
