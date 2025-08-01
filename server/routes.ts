@@ -6,6 +6,7 @@ import { therapeuticAI } from "./services/openai";
 import multer from "multer";
 import path from "path";
 import express, { Request, Response } from "express";
+import type { NextFunction } from "express";
 import { createUser, getUserByEmail, User } from "./auth";
 import { setupAuth, isAuthenticated } from "./auth/middleware";
 import session from "express-session";
@@ -39,6 +40,7 @@ import { db } from "./db";
 declare module 'express-session' {
     interface SessionData {
         user?: any; // Allow flexible user object for now
+        testData?: any; // Allow test data for debugging
     }
 }
 
@@ -80,24 +82,190 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
 
     // --- Session: Use secure cookies and correct SameSite for production ---
+    const PgSession = connectPgSimple(session);
+    
+    console.log('Setting up session store with DATABASE_URL:', process.env.DATABASE_URL ? 'Present' : 'Missing');
+    
+    // Create session store with error handling
+    const sessionStore = new PgSession({
+        conObject: {
+            connectionString: process.env.DATABASE_URL,
+            ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        },
+        tableName: 'auth_sessions',
+        createTableIfMissing: true,
+        pruneSessionInterval: 60, // Clean up expired sessions every 60 seconds
+    });
+    
+    // Add error handling for session store
+    sessionStore.on('connect', () => {
+        console.log('✅ Session store connected successfully');
+    });
+    
+    sessionStore.on('error', (error) => {
+        console.error('❌ Session store error:', error);
+    });
+    
+    // Test the session store connection
+    sessionStore.on('disconnect', () => {
+        console.log('Session store disconnected');
+    });
+    
+    // Test session store operations
+    const testSessionId = 'test-init-' + Date.now();
+    const testData = { 
+        test: true, 
+        timestamp: Date.now(),
+        cookie: {
+            originalMaxAge: 24 * 60 * 60 * 1000,
+            expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            secure: process.env.NODE_ENV === 'production',
+            httpOnly: true,
+            path: '/'
+        }
+    };
+    
+    sessionStore.set(testSessionId, testData, (err) => {
+        if (err) {
+            console.error('❌ Initial session store test failed:', err);
+        } else {
+            console.log('✅ Initial session store test passed');
+            // Clean up test session
+            sessionStore.destroy(testSessionId, (destroyErr) => {
+                if (destroyErr) {
+                    console.error('❌ Failed to clean up test session:', destroyErr);
+                } else {
+                    console.log('✅ Test session cleaned up');
+                }
+            });
+        }
+    });
+    
     app.use(session({
-        store: new (connectPgSimple(session))({
-            conObject: {
-                connectionString: process.env.DATABASE_URL,
-            },
-            tableName: 'auth_sessions',
-        }),
-        secret: "repair-request-secret",
-        resave: false,
+        store: sessionStore,
+        secret: process.env.SESSION_SECRET || "repair-request-secret",
+        resave: true, // Changed to true to ensure sessions are saved
         saveUninitialized: false,
         cookie: {
             secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax"
-        }
+            sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax",
+            httpOnly: true,
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        },
+        name: 'calmpath.sid'
     }));
+    
+    // Add session error handling middleware
+    app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+        if (err && err.code === 'ECONNREFUSED') {
+            console.error('Database connection error:', err);
+            res.status(500).json({ error: 'Database connection failed' });
+        } else {
+            next(err);
+        }
+    });
+    
+    // Add session debugging middleware
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - Session ID: ${req.sessionID}`);
+        if (req.session?.user) {
+            console.log(`[${new Date().toISOString()}] User in session: ${req.session.user.email}`);
+        }
+        
+        // Add response interceptor to log session changes
+        const originalSend = res.send;
+        res.send = function(data) {
+            console.log(`[${new Date().toISOString()}] Response sent for ${req.method} ${req.path}`);
+            if (req.session?.user) {
+                console.log(`[${new Date().toISOString()}] Session user after response: ${req.session.user.email}`);
+            }
+            return originalSend.call(this, data);
+        };
+        
+        next();
+    });
 
     app.get("/api/health", (req, res) => {
         res.json({ status: "ok" });
+    });
+    
+    // Debug session status
+    app.get("/api/debug/session", (req, res) => {
+        res.json({
+            sessionId: req.sessionID,
+            hasUser: !!req.session?.user,
+            user: req.session?.user,
+            cookie: req.session?.cookie
+        });
+    });
+    
+    // Test session storage
+    app.post("/api/debug/test-session", (req, res) => {
+        try {
+            // Set a test session
+            req.session.testData = {
+                timestamp: new Date().toISOString(),
+                message: "Test session data"
+            };
+            
+            console.log('Setting test session with ID:', req.sessionID);
+            
+            // Force save the session
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving test session:', err);
+                    res.status(500).json({ error: 'Failed to save session', details: err.message });
+                } else {
+                    console.log('Test session saved successfully with ID:', req.sessionID);
+                    res.json({ 
+                        success: true, 
+                        sessionId: req.sessionID,
+                        message: 'Test session saved'
+                    });
+                }
+            });
+        } catch (error) {
+            console.error('Error in test session route:', error);
+            res.status(500).json({ error: 'Test session failed' });
+        }
+    });
+    
+    // Check sessions in database
+    app.get("/api/debug/sessions-in-db", async (req, res) => {
+        try {
+            const { Pool } = require('pg');
+            const pool = new Pool({
+                connectionString: process.env.DATABASE_URL,
+                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+            });
+            
+            const client = await pool.connect();
+            const result = await client.query(`
+                SELECT sid, sess, expire 
+                FROM auth_sessions 
+                ORDER BY expire DESC 
+                LIMIT 10
+            `);
+            
+            client.release();
+            await pool.end();
+            
+            res.json({
+                sessionCount: result.rows.length,
+                sessions: result.rows.map((row: any) => ({
+                    sid: row.sid,
+                    hasUser: !!row.sess?.user,
+                    userEmail: row.sess?.user?.email,
+                    expire: row.expire
+                }))
+            });
+        } catch (error: unknown) {
+            console.error('Error checking sessions in DB:', error);
+            res.status(500).json({ 
+                error: 'Failed to check sessions in DB', 
+                details: error instanceof Error ? error.message : 'Unknown error' 
+            });
+        }
     });
 
     // Get current user
@@ -915,15 +1083,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
 
             console.log("Session set:", req.session.user);
-
-            res.json({
-                success: true,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType,
-                    usedInviteCode: user.usedInviteCode || false
+            
+            // Force save the session and wait for it to complete
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving session:', err);
+                    res.status(500).json({ error: 'Failed to save session' });
+                } else {
+                    console.log('Session saved successfully');
+                    res.json({
+                        success: true,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            name: user.firstName,
+                            accountType: user.accountType,
+                            usedInviteCode: user.usedInviteCode || false
+                        }
+                    });
                 }
             });
         } catch (error) {
@@ -959,14 +1136,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...user,
                 userId: user.id,
             };
-
-            res.json({
-                success: true,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType
+            
+            // Force save the session and wait for it to complete
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Error saving session:', err);
+                    res.status(500).json({ error: 'Failed to save session' });
+                } else {
+                    console.log('Session saved successfully');
+                    res.json({
+                        success: true,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            name: user.firstName,
+                            accountType: user.accountType
+                        }
+                    });
                 }
             });
         } catch (error) {
