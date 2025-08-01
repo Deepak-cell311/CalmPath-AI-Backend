@@ -8,7 +8,7 @@ import path from "path";
 import express, { Request, Response } from "express";
 import type { NextFunction } from "express";
 import { createUser, getUserByEmail, User } from "./auth";
-import { setupAuth, isAuthenticated } from "./auth/middleware";
+import { setupAuth, isAuthenticated, isAuthenticatedToken } from "./auth/middleware";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
@@ -460,7 +460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
     
-    // Token-based authentication (backup)
+    // Token-based authentication (primary solution)
     app.post("/api/auth/login-token", async (req, res) => {
         try {
             const { accountType, email, password, inviteCode } = req.body;
@@ -512,6 +512,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error('Token login error:', error);
             res.status(500).json({ error: 'Login failed' });
+        }
+    });
+    
+    // Token-based user verification
+    app.get("/api/auth/user-token", async (req, res) => {
+        try {
+            const authHeader = req.headers.authorization;
+            
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                return res.status(401).json({ message: "No token provided" });
+            }
+            
+            const token = authHeader.substring(7); // Remove 'Bearer '
+            
+            try {
+                const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+                const userId = decoded.userId;
+                
+                if (!userId) {
+                    return res.status(401).json({ message: "Invalid token" });
+                }
+                
+                const user = await storage.getUser(userId);
+                
+                if (!user) {
+                    return res.status(404).json({ message: "User not found" });
+                }
+                
+                res.json({
+                    id: user.id,
+                    email: user.email,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    accountType: user.accountType,
+                    role: user.role || "staff"
+                });
+                
+            } catch (tokenError) {
+                console.error('Token decode error:', tokenError);
+                res.status(401).json({ message: "Invalid token format" });
+            }
+            
+        } catch (error) {
+            console.error("Error fetching user with token:", error);
+            res.status(500).json({ message: "Failed to fetch user" });
         }
     });
     
@@ -1474,6 +1519,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(401).json({ error: 'Not authenticated' });
         }
     });
+    
+    // Token-based current user
+    app.get('/api/auth/currentUser-token', isAuthenticatedToken, async (req, res) => {
+        try {
+            const userId = req.user?.userId;
+            
+            if (!userId) {
+                return res.status(401).json({ error: 'No user ID in token' });
+            }
+            
+            const currentUser = await storage.getUser(userId);
+            if (currentUser) {
+                res.json({
+                    id: currentUser.id,
+                    email: currentUser.email,
+                    name: currentUser.firstName,
+                    accountType: currentUser.accountType,
+                    usedInviteCode: currentUser.usedInviteCode || false
+                });
+            } else {
+                res.status(404).json({ error: 'User not found in database' });
+            }
+        } catch (error) {
+            console.error("Error fetching current user with token:", error);
+            res.status(500).json({ error: 'Failed to fetch user data' });
+        }
+    });
 
     // Invite-based login (password-less)
     app.post('/api/auth/invite-login', async (req, res) => {
@@ -1528,32 +1600,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 })
                 .where(eq(users.id, user.id));
 
-            // Save session
-            req.session.user = {
-                ...user,
+            // Generate a simple token
+            const token = Buffer.from(JSON.stringify({
                 userId: user.id,
-            };
+                email: user.email,
+                timestamp: Date.now()
+            })).toString('base64');
 
             console.log("Invite login successful:", user.id);
             
-            // Force save the session and wait for it to complete
-            req.session.save((err) => {
-                if (err) {
-                    console.error('Error saving session:', err);
-                    res.status(500).json({ error: 'Failed to save session' });
-                } else {
-                    console.log('Session saved successfully');
-                    res.json({
-                        success: true,
-                        user: {
-                            id: user.id,
-                            email: user.email,
-                            name: user.firstName,
-                            accountType: user.accountType,
-                            usedInviteCode: true
-                        }
-                    });
-                }
+            res.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: true
+                },
+                token: token
             });
         } catch (error) {
             console.error('Invite login error:', error);
