@@ -15,8 +15,10 @@ const allowedOrigins = [
   "http://localhost:3000",            // (optional) for local dev
   "http://localhost:5173",            // Vite default port
   "http://127.0.0.1:3000",           // Alternative localhost
-  "http://127.0.0.1:5173"            // Alternative localhost
-];
+  "http://127.0.0.1:5173",           // Alternative localhost
+  process.env.FRONTEND_URL,          // Production frontend URL from env
+  process.env.PROD_FRONTEND_URL,     // Alternative production URL
+].filter(Boolean); // Remove undefined values
 
 app.use(cors({
   origin: function(origin, callback) {
@@ -35,7 +37,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "Cookie"],
   exposedHeaders: ["Set-Cookie"]
 }));
 

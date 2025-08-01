@@ -79,16 +79,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // --- Session: Use memory store for development, PostgreSQL for production ---
   const sessionConfig: any = {
-    secret: "repair-request-secret",
+    secret: process.env.SESSION_SECRET || "repair-request-secret",
     resave: false,
     saveUninitialized: false,
     name: 'connect.sid', // Explicit session name
     cookie: { 
-      secure: process.env.NODE_ENV === 'production', // Only secure in production
-      sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax", // lax for development
+      secure: false, // Set to false for both dev and prod unless you have HTTPS
+      sameSite: 'lax', // More permissive than 'none' - works better cross-origin
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
       httpOnly: true, // Prevent XSS
-      domain: process.env.NODE_ENV === 'production' ? undefined : undefined // Let browser set domain
+      domain: undefined // Let browser handle domain automatically
     }
   };
 
