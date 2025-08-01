@@ -89,7 +89,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             'https://calmpath-ai-frontend.vercel.app',
             'http://localhost:3000',
             'http://localhost:3001',
-            'https://calm-path-ai.vercel.app'
+            'https://calm-path-ai.vercel.app',
+            'http://54.157.38.95:3000'
         ];
         
         const origin = req.headers.origin;
@@ -119,11 +120,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     // Create session store with error handling
     const sessionStore = new PgSession({
-        conObject: {
-            connectionString: process.env.DATABASE_URL,
+            conObject: {
+                connectionString: process.env.DATABASE_URL,
             ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-        },
-        tableName: 'auth_sessions',
+            },
+            tableName: 'auth_sessions',
         createTableIfMissing: true,
         pruneSessionInterval: 60, // Clean up expired sessions every 60 seconds
     });
@@ -623,7 +624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Manual session failed' });
         }
     });
-    
+
     // Get current user
     app.get("/api/user/me", async (req, res) => {
         try {
@@ -1431,7 +1432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
 
             console.log("Session set:", req.session.user);
-            
+
             // Force save the session and wait for it to complete
             req.session.save((err) => {
                 if (err) {
@@ -1439,14 +1440,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session' });
                 } else {
                     console.log('Session saved successfully');
-                    res.json({
-                        success: true,
-                        user: {
-                            id: user.id,
-                            email: user.email,
-                            name: user.firstName,
-                            accountType: user.accountType,
-                            usedInviteCode: user.usedInviteCode || false
+            res.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType,
+                    usedInviteCode: user.usedInviteCode || false
                         }
                     });
                 }
@@ -1484,7 +1485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ...user,
                 userId: user.id,
             };
-            
+
             // Force save the session and wait for it to complete
             req.session.save((err) => {
                 if (err) {
@@ -1492,13 +1493,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session' });
                 } else {
                     console.log('Session saved successfully');
-                    res.json({
-                        success: true,
-                        user: {
-                            id: user.id,
-                            email: user.email,
-                            name: user.firstName,
-                            accountType: user.accountType
+            res.json({
+                success: true,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.firstName,
+                    accountType: user.accountType
                         }
                     });
                 }
@@ -1518,7 +1519,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             try {
                 const currentUser = await storage.getUser(userId);
                 if (currentUser) {
-                    res.json({
+                res.json({
                         id: currentUser.id,
                         email: currentUser.email,
                         name: currentUser.firstName,
@@ -1625,7 +1626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })).toString('base64');
 
             console.log("Invite login successful:", user.id);
-            
+
             res.json({
                 success: true,
                 user: {
