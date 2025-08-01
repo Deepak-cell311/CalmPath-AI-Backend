@@ -119,15 +119,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cookie: {
             originalMaxAge: 24 * 60 * 60 * 1000,
             expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
-            secure: process.env.NODE_ENV === 'production',
+            secure: false, // Temporarily disable for testing
             httpOnly: true,
             path: '/'
         }
     };
     
+    console.log('Testing session store with session ID:', testSessionId);
+    console.log('Test data:', JSON.stringify(testData, null, 2));
+    
     sessionStore.set(testSessionId, testData, (err) => {
         if (err) {
             console.error('❌ Initial session store test failed:', err);
+            console.error('Error details:', err.message);
         } else {
             console.log('✅ Initial session store test passed');
             // Clean up test session
@@ -175,8 +179,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Add session debugging middleware
     app.use((req: Request, res: Response, next: NextFunction) => {
         console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - Session ID: ${req.sessionID}`);
+        console.log(`[${new Date().toISOString()}] Session exists: ${!!req.session}`);
+        console.log(`[${new Date().toISOString()}] Session user exists: ${!!req.session?.user}`);
+        console.log(`[${new Date().toISOString()}] Session userId exists: ${!!req.session?.user?.userId}`);
+        
         if (req.session?.user) {
             console.log(`[${new Date().toISOString()}] User in session: ${req.session.user.email}`);
+            console.log(`[${new Date().toISOString()}] User ID in session: ${req.session.user.userId}`);
         }
         
         // Add response interceptor to log session changes
@@ -237,8 +246,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     sid: row.sid,
                     hasUser: !!row.sess?.user,
                     userEmail: row.sess?.user?.email,
+                    userId: row.sess?.user?.userId,
                     expire: row.expire
-                }))
+                })),
+                currentSessionId: req.sessionID,
+                currentSessionExists: !!req.session,
+                currentSessionUser: !!req.session?.user,
+                currentSessionUserId: req.session?.user?.userId
             });
         } catch (error: unknown) {
             console.error('Error checking sessions in DB:', error);
@@ -330,6 +344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             };
             
             console.log('Setting test user session with ID:', req.sessionID);
+            console.log('Test user session data:', req.session.user);
             
             // Force save the session
             req.session.save((err) => {
@@ -349,6 +364,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error('Error in test user session route:', error);
             res.status(500).json({ error: 'Test user session failed' });
+        }
+    });
+    
+    // Test session retrieval
+    app.get("/api/debug/test-session-retrieval", (req, res) => {
+        try {
+            console.log('Testing session retrieval for ID:', req.sessionID);
+            console.log('Session exists:', !!req.session);
+            console.log('Session user exists:', !!req.session?.user);
+            console.log('Session user data:', req.session?.user);
+            
+            res.json({
+                sessionId: req.sessionID,
+                sessionExists: !!req.session,
+                userExists: !!req.session?.user,
+                userData: req.session?.user,
+                message: 'Session retrieval test completed'
+            });
+        } catch (error) {
+            console.error('Error in session retrieval test:', error);
+            res.status(500).json({ error: 'Session retrieval test failed' });
         }
     });
     
