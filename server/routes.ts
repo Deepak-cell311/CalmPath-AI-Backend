@@ -80,6 +80,20 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+    
+    // Add CORS configuration
+    app.use((req, res, next) => {
+        res.header('Access-Control-Allow-Origin', 'https://calmpath-ai.vercel.app');
+        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+        res.header('Access-Control-Allow-Credentials', 'true');
+        
+        if (req.method === 'OPTIONS') {
+            res.sendStatus(200);
+        } else {
+            next();
+        }
+    });
 
     // --- Session: Use secure cookies and correct SameSite for production ---
     const PgSession = connectPgSimple(session);
@@ -152,7 +166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         saveUninitialized: false,
         cookie: {
             secure: false, // Disable for testing
-            sameSite: "lax", // Use lax for testing
+            sameSite: "none", // Use none for cross-domain
             httpOnly: true,
             maxAge: 24 * 60 * 60 * 1000, // 24 hours
             path: '/',
@@ -215,6 +229,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             user: req.session?.user,
             cookie: req.session?.cookie,
             requestCookies: req.headers.cookie,
+            headers: {
+                origin: req.headers.origin,
+                referer: req.headers.referer,
+                host: req.headers.host,
+                'user-agent': req.headers['user-agent']
+            },
             environment: {
                 NODE_ENV: process.env.NODE_ENV,
                 cookieSecure: process.env.NODE_ENV === 'production',
@@ -414,11 +434,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session', details: err.message });
                 } else {
                     console.log('Manual session saved successfully with ID:', req.sessionID);
+                    
+                    // Set a test cookie manually to see if it works
+                    res.cookie('test-cookie', 'test-value', {
+                        httpOnly: true,
+                        secure: false,
+                        sameSite: 'none',
+                        maxAge: 24 * 60 * 60 * 1000
+                    });
+                    
                     res.json({ 
                         success: true, 
                         sessionId: req.sessionID,
                         user: req.session.user,
-                        message: 'Manual session set successfully'
+                        message: 'Manual session set successfully',
+                        cookieSet: true
                     });
                 }
             });
