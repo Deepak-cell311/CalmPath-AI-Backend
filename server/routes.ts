@@ -77,22 +77,46 @@ const upload = multer({
 
 export async function registerRoutes(app: Express): Promise<Server> {
 
-  // --- Session: Use secure cookies and correct SameSite for production ---
-  app.use(session({
-    store: new (connectPgSimple(session))({
+  // --- Session: Use memory store for development, PostgreSQL for production ---
+  const sessionConfig: any = {
+    secret: "repair-request-secret",
+    resave: false,
+    saveUninitialized: false,
+    name: 'connect.sid', // Explicit session name
+    cookie: { 
+      secure: process.env.NODE_ENV === 'production', // Only secure in production
+      sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax", // lax for development
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      httpOnly: true, // Prevent XSS
+      domain: process.env.NODE_ENV === 'production' ? undefined : undefined // Let browser set domain
+    }
+  };
+
+  // Use PostgreSQL session store only in production
+  if (process.env.NODE_ENV === 'production') {
+    sessionConfig.store = new (connectPgSimple(session))({
       conObject: {
         connectionString: process.env.DATABASE_URL,
       },
       tableName: 'express_sessions',
-    }),
-    secret: "repair-request-secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: { secure: true, sameSite: "none" }
-  }));
+    });
+  }
+
+  app.use(session(sessionConfig));
   
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Test route to check session without authentication
+  app.get("/api/session-test", (req, res) => {
+    res.json({
+      sessionID: req.sessionID,
+      hasUser: !!req.session?.user,
+      userEmail: req.session?.user?.email || null,
+      cookies: req.get('Cookie') || null,
+      origin: req.get('Origin') || null
+    });
   });
 
   app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  // Serve static files from the uploads directory
@@ -107,6 +131,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Add the missing /api/user/me route
+  app.get('/api/user/me', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const user = req.user;
+      res.json({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        accountType: user.accountType,
+        profileImageUrl: user.profileImageUrl,
+        role: user.role
+      });
+    } catch (error) {
+      console.error("Error fetching current user:", error);
+      res.status(500).json({ message: "Failed to fetch current user" });
     }
   });
 
@@ -200,6 +243,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating patient interaction:", error);
       res.status(500).json({ message: "Failed to update patient interaction" });
+    }
+  });
+
+  // Get patient reminders
+  app.get("/api/patients/:id/reminders", isAuthenticated, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      
+      // For now, return empty array - you can implement actual reminder logic later
+      res.json([]);
+    } catch (error) {
+      console.error("Error fetching patient reminders:", error);
+      res.status(500).json({ message: "Failed to fetch patient reminders" });
     }
   });
 
@@ -689,7 +745,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
-  app.post('/api/auth/login', async (req, res) => {
+  app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> => {
     try {
       const { accountType, email, password } = req.body;
 
@@ -743,7 +799,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
 
-  app.post('/api/auth/facility/login', async (req, res) => {
+  app.post('/api/auth/facility/login', async (req: Request, res: Response): Promise<void> => {
     try {
       const { email, facilityName, adminName } = req.body;
 

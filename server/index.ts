@@ -12,19 +12,31 @@ const app = express();
 // --- CORS: Allow credentials and set correct origin for production ---
 const allowedOrigins = [
   "https://calm-path-ai.vercel.app", // <-- Your actual frontend domain
-  "http://localhost:3000"            // (optional) for local dev
+  "http://localhost:3000",            // (optional) for local dev
+  "http://localhost:5173",            // Vite default port
+  "http://127.0.0.1:3000",           // Alternative localhost
+  "http://127.0.0.1:5173"            // Alternative localhost
 ];
+
 app.use(cors({
   origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
+    console.log("CORS check - Origin:", origin);
+    
     if (allowedOrigins.includes(origin)) {
+      console.log("CORS allowed for origin:", origin);
       return callback(null, true);
     } else {
+      console.log("CORS blocked for origin:", origin);
       return callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+  exposedHeaders: ["Set-Cookie"]
 }));
 
 app.use(express.json());
@@ -68,8 +80,13 @@ app.use((req, res, next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    // Only send response if headers haven't been sent yet
+    if (!res.headersSent) {
+      res.status(status).json({ message });
+    }
+    
+    // Log the error but don't throw it again
+    console.error('Error handled by middleware:', err);
   });
 
   // importantly only setup vite in development and after
@@ -85,11 +102,8 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = 5000;
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
+  server.listen(port, () => {
+  log(`serving on port ${port}`);
+});
+
 })(); 
