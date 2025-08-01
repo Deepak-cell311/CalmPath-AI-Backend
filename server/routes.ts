@@ -83,7 +83,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     // Add CORS configuration
     app.use((req, res, next) => {
-        res.header('Access-Control-Allow-Origin', 'https://calm-path-ai.vercel.app');
+        const allowedOrigins = [
+            'https://calm-path-ai.vercel.app',
+            'https://calmpath-ai.vercel.app',
+            'https://calmpath-ai-frontend.vercel.app',
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'https://calm-path-ai.vercel.app'
+        ];
+        
+        const origin = req.headers.origin;
+        console.log('Request origin:', origin);
+        
+        if (origin && allowedOrigins.includes(origin)) {
+            res.header('Access-Control-Allow-Origin', origin);
+        } else if (origin) {
+            console.log('Origin not in allowed list:', origin);
+        }
+        
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
         res.header('Access-Control-Allow-Credentials', 'true');
