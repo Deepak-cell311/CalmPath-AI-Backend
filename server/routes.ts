@@ -147,13 +147,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resave: true, // Changed to true to ensure sessions are saved
         saveUninitialized: false,
         cookie: {
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? "none" : "lax",
+            secure: false, // Temporarily disable for testing
+            sameSite: "lax", // Temporarily use lax for testing
             httpOnly: true,
             maxAge: 24 * 60 * 60 * 1000 // 24 hours
         },
         name: 'calmpath.sid'
     }));
+    
+    // Add production debugging
+    console.log('Session configuration:');
+    console.log('- NODE_ENV:', process.env.NODE_ENV);
+    console.log('- Cookie secure:', process.env.NODE_ENV === 'production');
+    console.log('- Cookie sameSite:', process.env.NODE_ENV === 'production' ? "none" : "lax");
+    console.log('- Session secret present:', !!process.env.SESSION_SECRET);
     
     // Add session error handling middleware
     app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -195,7 +202,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             sessionId: req.sessionID,
             hasUser: !!req.session?.user,
             user: req.session?.user,
-            cookie: req.session?.cookie
+            cookie: req.session?.cookie,
+            environment: {
+                NODE_ENV: process.env.NODE_ENV,
+                cookieSecure: process.env.NODE_ENV === 'production',
+                cookieSameSite: process.env.NODE_ENV === 'production' ? "none" : "lax"
+            }
         });
     });
     
