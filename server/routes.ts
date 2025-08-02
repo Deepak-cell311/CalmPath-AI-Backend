@@ -36,6 +36,7 @@ import {
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
 import { db } from "./db";
+import cors from "cors";
 
 declare module 'express-session' {
     interface SessionData {
@@ -82,36 +83,59 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
     
     // Add CORS configuration
-    app.use((req, res, next) => {
-        const allowedOrigins = [
-            'https://calm-path-ai.vercel.app',
-            'https://calmpath-ai.vercel.app',
-            'https://calmpath-ai-frontend.vercel.app',
-            'http://localhost:3000',
-            'http://localhost:3001',
-            'https://calm-path-ai.vercel.app',
-            'http://54.157.38.95:3000'
-        ];
+    // app.use((req, res, next) => {
+    //     const allowedOrigins = [
+    //         'https://calm-path-ai.vercel.app',
+    //         'https://calmpath-ai.vercel.app',
+    //         'https://calmpath-ai-frontend.vercel.app',
+    //         'http://localhost:3000',
+    //         'http://localhost:3001',
+    //         'https://calm-path-ai.vercel.app',
+    //         'http://54.157.38.95:3000'
+    //     ];
         
-        const origin = req.headers.origin;
-        console.log('Request origin:', origin);
+    //     const origin = req.headers.origin;
+    //     console.log('Request origin:', origin);
         
-        if (origin && allowedOrigins.includes(origin)) {
-            res.header('Access-Control-Allow-Origin', origin);
-        } else if (origin) {
-            console.log('Origin not in allowed list:', origin);
-        }
+    //     if (origin && allowedOrigins.includes(origin)) {
+    //         res.header('Access-Control-Allow-Origin', origin);
+    //     } else if (origin) {
+    //         console.log('Origin not in allowed list:', origin);
+    //     }
         
-        res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-        res.header('Access-Control-Allow-Credentials', 'true');
+    //     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    //     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    //     res.header('Access-Control-Allow-Credentials', 'true');
         
-        if (req.method === 'OPTIONS') {
-            res.sendStatus(200);
-        } else {
-            next();
-        }
-    });
+    //     if (req.method === 'OPTIONS') {
+    //         res.sendStatus(200);
+    //     } else {
+    //         next();
+    //     }
+    // });
+
+    //  Test CORS
+    const allowedOrigins = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'https://calm-path-ai.vercel.app',
+        'https://calmpath-ai.vercel.app',
+        'https://calmpath-ai-frontend.vercel.app',
+        'http://54.157.38.95:3000'
+      ];
+      
+      app.use(cors({
+        origin: (origin, callback) => {
+          if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+          } else {
+            callback(new Error('Not allowed by CORS'));
+          }
+        },
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
+      }));
 
     // --- Session: Use secure cookies and correct SameSite for production ---
     const PgSession = connectPgSimple(session);
