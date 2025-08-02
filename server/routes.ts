@@ -116,12 +116,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     //  Test CORS
     const allowedOrigins = [
+        'http://54.157.38.95:3000',
         'http://localhost:3000',
         'http://localhost:3001',
         'https://calm-path-ai.vercel.app',
         'https://calmpath-ai.vercel.app',
         'https://calmpath-ai-frontend.vercel.app',
-        'http://54.157.38.95:3000'
+        
       ];
       
       app.use(cors({
