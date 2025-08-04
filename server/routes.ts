@@ -117,13 +117,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     //  Test CORS
     const allowedOrigins = [
         'https://app.calmpath.ai',
-        'http://54.157.38.95:3000',
         'http://localhost:3000',
-        'http://localhost:3001',
-        'https://calm-path-ai.vercel.app',
-        'https://calmpath-ai.vercel.app',
-        'https://calmpath-ai-frontend.vercel.app',
-        
+        'https://calm-path-ai.vercel.app',        
       ];
       
       app.use(cors({
@@ -523,9 +518,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             // Check account type match
+            // Allow Family Members to login as Patient (for dual access)
             if (user.accountType !== accountType) {
-                res.status(403).json({ error: 'Account type mismatch' });
-                return;
+                // Special case: Family Member can login as Patient
+                if (!(user.accountType === "Family Member" && accountType === "Patient")) {
+                    res.status(403).json({ error: 'Account type mismatch' });
+                    return;
+                }
             }
 
             // Verify password
@@ -1610,9 +1609,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             // Check account type match
+            // Allow Family Members to login as Patient (for dual access)
             if (user.accountType !== accountType) {
-                res.status(403).json({ error: 'Account type mismatch' });
-                return;
+                // Special case: Family Member can login as Patient
+                if (!(user.accountType === "Family Member" && accountType === "Patient")) {
+                    res.status(403).json({ error: 'Account type mismatch' });
+                    return;
+                }
             }
 
             // Get facilities
