@@ -116,6 +116,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     //  Test CORS
     const allowedOrigins = [
+        'http://app.calmpath.ai',
         'http://54.157.38.95:3000',
         'http://localhost:3000',
         'http://localhost:3001',
