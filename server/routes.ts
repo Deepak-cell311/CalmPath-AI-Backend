@@ -1260,8 +1260,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password: z.string().min(6, "Password must be at least 6 characters"),
         confirmPassword: z.string().min(6, "Confirm password is required"),
         relationToPatient: z.string().optional(),
-        patientAccessCode: z.string().optional(),
-        facilityId: z.union([z.string(), z.number()]).optional(),
+        // patientAccessCode: z.string().optional(),
+        // facilityId: z.union([z.string(), z.number()]).optional(),
         facilityName: z.string().optional(),
         age: z.number().optional(),
         roomNumber: z.string().optional(),
@@ -1288,8 +1288,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             email,
             password,
             relationToPatient,
-            patientAccessCode,
-            facilityId,
+            // patientAccessCode,
+            // facilityId,
             facilityName,
             roomNumber,
             care_level,
@@ -1309,20 +1309,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Facility Staff logic
             let facilityStaffFacilityId = null;
             if (accountType === "Facility Staff") {
-                if (!facilityId || !facilityName) {
-                    return res.status(400).json({ message: "Facility ID and Facility Name are required for Facility Staff" });
+                if (!facilityName) {
+                    return res.status(400).json({ message: "Facility Name is required for Facility Staff" });
                 }
-                // Check if facility exists
-                let facilityRecord = await db.select().from(facilities).where(eq(facilities.id, String(facilityId)));
-                if (facilityRecord.length === 0) {
-                    // Facility does not exist, create it
-                    await db.insert(facilities).values({
-                        id: String(facilityId),
-                        name: facilityName,
-                        // Add other required fields if needed
-                    });
-                }
-                facilityStaffFacilityId = String(facilityId);
+                // For now, we'll skip facility ID logic since it's not needed
+                facilityStaffFacilityId = null;
             }
 
             // Base user insert
@@ -1343,7 +1334,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                                 ? "family"
                                 : "caregiver",
                     relationToPatient: accountType === "Family Member" ? relationToPatient : null,
-                    patientAccessCode: accountType === "Family Member" ? patientAccessCode : null,
+                    patientAccessCode: null,
                     facilityStaffFacilityId: accountType === "Facility Staff" ? facilityStaffFacilityId : null,
                     isActive: true,
                     createdAt: new Date(),
@@ -1357,7 +1348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const validCareLevels = ["low", "medium", "high"];
                 const patientData: any = {
                     userId: userId,
-                    facilityId: facilityId != null ? String(facilityId) : null,
+                    facilityId: null,
                     firstName,
                     lastName,
                     status: "ok",
