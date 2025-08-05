@@ -16,7 +16,7 @@ app.use('/webhook', express.raw({ type: 'application/json' }));
 
 // --- CORS: Allow credentials and set correct origin for production ---
 const allowedOrigins = [
-  "https://app.calmpath.ai",
+  "https://app.calmpath.ai", 
   "https://calm-path-ai.vercel.app",
   "http://localhost:3000"            
 ];
