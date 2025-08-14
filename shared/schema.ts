@@ -316,6 +316,25 @@ export const insertReminderSchema = createInsertSchema(reminders).omit({
   updatedAt: true,
 });
 
+// Invite system insert schemas
+export const insertFacilityInvitePackageSchema = createInsertSchema(facilityInvitePackages).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertFacilityInvitePurchaseSchema = createInsertSchema(facilityInvitePurchases).omit({
+  id: true,
+  purchasedAt: true,
+  completedAt: true,
+});
+
+export const insertFacilityInviteSchema = createInsertSchema(facilityInvites).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type StaffNote = typeof staffNotes.$inferSelect;
 export type InsertStaffNote = z.infer<(typeof insertStaffNoteSchema) & ZodType<any, any, any>>;
 export type MoodLog = typeof moodLogs.$inferSelect;

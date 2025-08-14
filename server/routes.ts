@@ -31,7 +31,9 @@ import {
     memoryPhotos,
     facilities,
     insertMedicationSchema,
-    facilityInvitePurchases
+    facilityInvitePurchases,
+    facilityInvitePackages,
+    facilityInvites
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
@@ -65,7 +67,7 @@ const upload = multer({
         }
     }),
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: 10 * 1024 * 1024, // 10MB limit
     },
     fileFilter: (req, file, cb) => {
         const allowedTypes = /jpeg|jpg|png|gif/;
@@ -81,93 +83,61 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-    
-    // Add CORS configuration
-    // app.use((req, res, next) => {
-    //     const allowedOrigins = [
-    //         'https://calm-path-ai.vercel.app',
-    //         'https://calmpath-ai.vercel.app',
-    //         'https://calmpath-ai-frontend.vercel.app',
-    //         'http://localhost:3000',
-    //         'http://localhost:3001',
-    //         'https://calm-path-ai.vercel.app',
-    //         'http://54.157.38.95:3000'
-    //     ];
-        
-    //     const origin = req.headers.origin;
-    //     console.log('Request origin:', origin);
-        
-    //     if (origin && allowedOrigins.includes(origin)) {
-    //         res.header('Access-Control-Allow-Origin', origin);
-    //     } else if (origin) {
-    //         console.log('Origin not in allowed list:', origin);
-    //     }
-        
-    //     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    //     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    //     res.header('Access-Control-Allow-Credentials', 'true');
-        
-    //     if (req.method === 'OPTIONS') {
-    //         res.sendStatus(200);
-    //     } else {
-    //         next();
-    //     }
-    // });
 
     //  Test CORS
     const allowedOrigins = [
         'https://app.calmpath.ai',
         'http://localhost:3000',
-        'https://calm-path-ai.vercel.app',        
-      ];
-      
-      app.use(cors({
+        'https://calm-path-ai.vercel.app',
+    ];
+
+    app.use(cors({
         origin: (origin, callback) => {
-          if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-          } else {
-            callback(new Error('Not allowed by CORS'));
-          }
+            if (!origin || allowedOrigins.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
         },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
-      }));
+    }));
 
     // --- Session: Use secure cookies and correct SameSite for production ---
     const PgSession = connectPgSimple(session);
-    
+
     console.log('Setting up session store with DATABASE_URL:', process.env.DATABASE_URL ? 'Present' : 'Missing');
-    
+
     // Create session store with error handling
     const sessionStore = new PgSession({
-            conObject: {
-                connectionString: process.env.DATABASE_URL,
+        conObject: {
+            connectionString: process.env.DATABASE_URL,
             ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-            },
-            tableName: 'auth_sessions',
+        },
+        tableName: 'auth_sessions',
         createTableIfMissing: true,
         pruneSessionInterval: 60, // Clean up expired sessions every 60 seconds
     });
-    
+
     // Add error handling for session store
     sessionStore.on('connect', () => {
         console.log('✅ Session store connected successfully');
     });
-    
+
     sessionStore.on('error', (error) => {
         console.error('❌ Session store error:', error);
     });
-    
+
     // Test the session store connection
     sessionStore.on('disconnect', () => {
         console.log('Session store disconnected');
     });
-    
+
     // Test session store operations
     const testSessionId = 'test-init-' + Date.now();
-    const testData = { 
-        test: true, 
+    const testData = {
+        test: true,
         timestamp: Date.now(),
         cookie: {
             originalMaxAge: 24 * 60 * 60 * 1000,
@@ -177,10 +147,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             path: '/'
         }
     };
-    
+
     console.log('Testing session store with session ID:', testSessionId);
     console.log('Test data:', JSON.stringify(testData, null, 2));
-    
+
     sessionStore.set(testSessionId, testData, (err) => {
         if (err) {
             console.error('❌ Initial session store test failed:', err);
@@ -197,7 +167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
         }
     });
-    
+
     app.use(session({
         store: sessionStore,
         secret: process.env.SESSION_SECRET || "repair-request-secret",
@@ -213,14 +183,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         name: 'calmpath.sid'
     }));
-    
+
     // Add production debugging
     console.log('Session configuration:');
     console.log('- NODE_ENV:', process.env.NODE_ENV);
     console.log('- Cookie secure:', process.env.NODE_ENV === 'production');
     console.log('- Cookie sameSite:', process.env.NODE_ENV === 'production' ? "none" : "lax");
     console.log('- Session secret present:', !!process.env.SESSION_SECRET);
-    
+
     // Add session error handling middleware
     app.use((err: any, req: Request, res: Response, next: NextFunction) => {
         if (err && err.code === 'ECONNREFUSED') {
@@ -230,36 +200,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
             next(err);
         }
     });
-    
+
     // Add session debugging middleware
     app.use((req: Request, res: Response, next: NextFunction) => {
         console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - Session ID: ${req.sessionID}`);
         console.log(`[${new Date().toISOString()}] Session exists: ${!!req.session}`);
         console.log(`[${new Date().toISOString()}] Session user exists: ${!!req.session?.user}`);
         console.log(`[${new Date().toISOString()}] Session userId exists: ${!!req.session?.user?.userId}`);
-        
+
         if (req.session?.user) {
             console.log(`[${new Date().toISOString()}] User in session: ${req.session.user.email}`);
             console.log(`[${new Date().toISOString()}] User ID in session: ${req.session.user.userId}`);
         }
-        
+
         // Add response interceptor to log session changes
         const originalSend = res.send;
-        res.send = function(data) {
+        res.send = function (data) {
             console.log(`[${new Date().toISOString()}] Response sent for ${req.method} ${req.path}`);
             if (req.session?.user) {
                 console.log(`[${new Date().toISOString()}] Session user after response: ${req.session.user.email}`);
             }
             return originalSend.call(this, data);
         };
-        
+
         next();
     });
 
     app.get("/api/health", (req, res) => {
         res.json({ status: "ok" });
     });
-    
+
     // Debug session status
     app.get("/api/debug/session", (req, res) => {
         res.json({
@@ -281,7 +251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
         });
     });
-    
+
     // Check sessions in database
     app.get("/api/debug/sessions-in-db", async (req, res) => {
         try {
@@ -290,7 +260,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 connectionString: process.env.DATABASE_URL,
                 ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
             });
-            
+
             const client = await pool.connect();
             const result = await client.query(`
                 SELECT sid, sess, expire 
@@ -298,10 +268,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ORDER BY expire DESC 
                 LIMIT 10
             `);
-            
+
             client.release();
             await pool.end();
-            
+
             res.json({
                 sessionCount: result.rows.length,
                 sessions: result.rows.map((row: any) => ({
@@ -318,13 +288,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
         } catch (error: unknown) {
             console.error('Error checking sessions in DB:', error);
-            res.status(500).json({ 
-                error: 'Failed to check sessions in DB', 
-                details: error instanceof Error ? error.message : 'Unknown error' 
+            res.status(500).json({
+                error: 'Failed to check sessions in DB',
+                details: error instanceof Error ? error.message : 'Unknown error'
             });
         }
     });
-    
+
     // Test session storage
     app.post("/api/debug/test-session", (req, res) => {
         try {
@@ -333,7 +303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 timestamp: new Date().toISOString(),
                 message: "Test session data"
             };
-            
+
             // Force save the session
             req.session.save((err) => {
                 if (err) {
@@ -341,8 +311,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session', details: err.message });
                 } else {
                     console.log('Test session saved successfully');
-                    res.json({ 
-                        success: true, 
+                    res.json({
+                        success: true,
                         sessionId: req.sessionID,
                         message: 'Test session saved'
                     });
@@ -353,7 +323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Test session failed' });
         }
     });
-    
+
     // Check sessions in database
     app.get("/api/debug/sessions-in-db", async (req, res) => {
         try {
@@ -362,7 +332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 connectionString: process.env.DATABASE_URL,
                 ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
             });
-            
+
             const client = await pool.connect();
             const result = await client.query(`
                 SELECT sid, sess, expire 
@@ -370,10 +340,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ORDER BY expire DESC 
                 LIMIT 10
             `);
-            
+
             client.release();
             await pool.end();
-            
+
             res.json({
                 sessionCount: result.rows.length,
                 sessions: result.rows.map((row: any) => ({
@@ -385,13 +355,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
         } catch (error: unknown) {
             console.error('Error checking sessions in DB:', error);
-            res.status(500).json({ 
-                error: 'Failed to check sessions in DB', 
-                details: error instanceof Error ? error.message : 'Unknown error' 
+            res.status(500).json({
+                error: 'Failed to check sessions in DB',
+                details: error instanceof Error ? error.message : 'Unknown error'
             });
         }
-        });
-    
+    });
+
     // Test user session storage
     app.post("/api/debug/test-user-session", (req, res) => {
         try {
@@ -404,10 +374,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 accountType: 'Facility Staff',
                 userId: 'test-user-' + Date.now()
             };
-            
+
             console.log('Setting test user session with ID:', req.sessionID);
             console.log('Test user session data:', req.session.user);
-            
+
             // Force save the session
             req.session.save((err) => {
                 if (err) {
@@ -415,8 +385,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session', details: err.message });
                 } else {
                     console.log('Test user session saved successfully with ID:', req.sessionID);
-                    res.json({ 
-                        success: true, 
+                    res.json({
+                        success: true,
                         sessionId: req.sessionID,
                         user: req.session.user,
                         message: 'Test user session saved'
@@ -428,7 +398,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Test user session failed' });
         }
     });
-    
+
     // Test session retrieval
     app.get("/api/debug/test-session-retrieval", (req, res) => {
         try {
@@ -436,7 +406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log('Session exists:', !!req.session);
             console.log('Session user exists:', !!req.session?.user);
             console.log('Session user data:', req.session?.user);
-            
+
             res.json({
                 sessionId: req.sessionID,
                 sessionExists: !!req.session,
@@ -449,12 +419,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Session retrieval test failed' });
         }
     });
-    
+
     // Test cookie setting
     app.post("/api/debug/test-cookie", (req, res) => {
         try {
             console.log('Testing cookie setting');
-            
+
             // Set a simple test cookie
             res.cookie('test-cookie', 'test-value-' + Date.now(), {
                 httpOnly: true,
@@ -462,7 +432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 sameSite: 'none',
                 maxAge: 24 * 60 * 60 * 1000
             });
-            
+
             // Set session cookie manually
             res.cookie('calmpath.sid', 'test-session-' + Date.now(), {
                 httpOnly: true,
@@ -470,7 +440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 sameSite: 'none',
                 maxAge: 24 * 60 * 60 * 1000
             });
-            
+
             res.json({
                 success: true,
                 message: 'Test cookies set',
@@ -481,13 +451,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Cookie test failed' });
         }
     });
-    
+
     // Check cookies
     app.get("/api/debug/check-cookies", (req, res) => {
         try {
             console.log('Checking cookies');
             console.log('Request cookies:', req.headers.cookie);
-            
+
             res.json({
                 requestCookies: req.headers.cookie,
                 sessionId: req.sessionID,
@@ -498,7 +468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Cookie check failed' });
         }
     });
-    
+
     // Token-based authentication (primary solution)
     app.post("/api/auth/login-token", async (req, res) => {
         try {
@@ -547,7 +517,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     id: user.id,
                     email: user.email,
                     name: user.firstName,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
                     accountType: user.accountType,
+                    facilityId: user.facilityId,
                     usedInviteCode: user.usedInviteCode || false
                 },
                 token: token
@@ -557,52 +530,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ error: 'Login failed' });
         }
     });
-    
+
     // Token-based user verification
     app.get("/api/auth/user-token", async (req, res) => {
         try {
             const authHeader = req.headers.authorization;
-            
+
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 return res.status(401).json({ message: "No token provided" });
             }
-            
+
             const token = authHeader.substring(7); // Remove 'Bearer '
-            
+
             try {
                 const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
                 const userId = decoded.userId;
-                
+
                 if (!userId) {
                     return res.status(401).json({ message: "Invalid token" });
                 }
-                
+
                 const user = await storage.getUser(userId);
-                
+
                 if (!user) {
                     return res.status(404).json({ message: "User not found" });
                 }
-                
+
                 res.json({
                     id: user.id,
                     email: user.email,
                     firstName: user.firstName,
                     lastName: user.lastName,
                     accountType: user.accountType,
+                    facilityId: user.facilityId,
                     role: user.role || "staff"
                 });
-                
+
             } catch (tokenError) {
                 console.error('Token decode error:', tokenError);
                 res.status(401).json({ message: "Invalid token format" });
             }
-            
+
         } catch (error) {
             console.error("Error fetching user with token:", error);
             res.status(500).json({ message: "Failed to fetch user" });
         }
     });
-    
+
     // Set session manually for testing
     app.post("/api/debug/set-session", (req, res) => {
         try {
@@ -615,10 +589,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 accountType: 'Facility Staff',
                 userId: 'test-manual-' + Date.now()
             };
-            
+
             console.log('Manually setting session with ID:', req.sessionID);
             console.log('Session data:', req.session.user);
-            
+
             // Force save the session
             req.session.save((err) => {
                 if (err) {
@@ -626,7 +600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session', details: err.message });
                 } else {
                     console.log('Manual session saved successfully with ID:', req.sessionID);
-                    
+
                     // Set a test cookie manually to see if it works
                     res.cookie('test-cookie', 'test-value', {
                         httpOnly: true,
@@ -634,9 +608,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                         sameSite: 'none',
                         maxAge: 24 * 60 * 60 * 1000
                     });
-                    
-                    res.json({ 
-                        success: true, 
+
+                    res.json({
+                        success: true,
                         sessionId: req.sessionID,
                         user: req.session.user,
                         message: 'Manual session set successfully',
@@ -766,7 +740,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get all patients
     app.get("/api/patients", async (req, res) => {
         try {
-            const patients = await storage.getAllPatients();
+            const { userId, facilityId } = req.query;
+            const filters: { userId?: string; facilityId?: string } = {};
+
+            if (userId && typeof userId === 'string') {
+                filters.userId = userId;
+            }
+
+            if (facilityId && typeof facilityId === 'string') {
+                filters.facilityId = facilityId;
+            }
+
+            const patients = await storage.getAllPatients(filters);
             res.json(patients);
         } catch (error) {
             console.error("Error fetching patients:", error);
@@ -1275,8 +1260,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const parsed = signupSchema.safeParse(req.body);
         if (!parsed.success) {
             return res.status(400).json({
-                field: parsed.error.errors[0].path[0],
-                message: parsed.error.errors[0].message,
+                error: {
+                    field: parsed.error.errors[0].path[0],
+                    message: parsed.error.errors[0].message,
+                }
             });
         }
 
@@ -1298,22 +1285,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const normalizedPhone = phoneNumber.trim();
         const passwordHash = await bcrypt.hash(password, 10);
         const userId = randomUUID();
+        const emailCheck = email.trim();
 
         try {
-            // Check if user already exists
+            // Check if user phone number already exists
             const existing = await db.select().from(users).where(eq(users.phoneNumber, normalizedPhone));
             if (existing.length > 0) {
-                return res.status(409).json({ message: "Phone number already registered" });
+                return res.status(409).json({ 
+                    message: "Phone number already registered" 
+                });
+            }
+
+            // Check user email address already exists
+            const existingEmail = await db.select().from(users).where(eq(users.email, emailCheck))
+            if(existingEmail.length > 0){
+                return res.status(409).json({
+                    message: "Email Id already registered"
+                })
             }
 
             // Facility Staff logic
             let facilityStaffFacilityId = null;
             if (accountType === "Facility Staff") {
                 if (!facilityName) {
-                    return res.status(400).json({ message: "Facility Name is required for Facility Staff" });
+                    return res.status(400).json({ 
+                        message: "Facility Name is required for Facility Staff" 
+                    });
                 }
-                // For now, we'll skip facility ID logic since it's not needed
-                facilityStaffFacilityId = null;
+
+                // Create a new facility for the staff member
+                const facility = await storage.createFacility({
+                    name: facilityName,
+                    address: "",
+                    phone: normalizedPhone,
+                    adminEmail: email,
+                    tagline: "",
+                    logoUrl: "",
+                    brandColor: "#3B82F6",
+                    monthlyPrice: "25",
+                    promoCode: "",
+                    subscriptionTier: "premium"
+                });
+
+                facilityStaffFacilityId = facility.id;
+
+                // Create default invite packages for the new facility
+                await storage.createFacilityInvitePackage({
+                    facilityId: facility.id,
+                    packageName: "Starter Pack",
+                    inviteCount: 10,
+                    priceInCents: 2500, // $25
+                    isActive: true
+                });
+
+                await storage.createFacilityInvitePackage({
+                    facilityId: facility.id,
+                    packageName: "Professional Pack",
+                    inviteCount: 25,
+                    priceInCents: 5000, // $50
+                    isActive: true
+                });
+
+                await storage.createFacilityInvitePackage({
+                    facilityId: facility.id,
+                    packageName: "Enterprise Pack",
+                    inviteCount: 100,
+                    priceInCents: 15000, // $150
+                    isActive: true
+                });
             }
 
             // Base user insert
@@ -1348,7 +1387,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 const validCareLevels = ["low", "medium", "high"];
                 const patientData: any = {
                     userId: userId,
-                    facilityId: null,
+                    facilityId: null, // Will be set when they use an invite code
                     firstName,
                     lastName,
                     status: "ok",
@@ -1407,7 +1446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 try {
                     const facilities = await storage.getAllFacilities();
                     const facility = facilities[0]; // For now, get the first facility
-                    
+
                     if (!facility) {
                         res.status(500).json({ error: 'No facility found' });
                         return;
@@ -1456,14 +1495,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session' });
                 } else {
                     console.log('Session saved successfully');
-            res.json({
-                success: true,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType,
-                    usedInviteCode: user.usedInviteCode || false
+                    res.json({
+                        success: true,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            name: user.firstName,
+                            accountType: user.accountType,
+                            usedInviteCode: user.usedInviteCode || false
                         }
                     });
                 }
@@ -1509,13 +1548,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     res.status(500).json({ error: 'Failed to save session' });
                 } else {
                     console.log('Session saved successfully');
-            res.json({
-                success: true,
-                user: {
-                    id: user.id,
-                    email: user.email,
-                    name: user.firstName,
-                    accountType: user.accountType
+                    res.json({
+                        success: true,
+                        user: {
+                            id: user.id,
+                            email: user.email,
+                            name: user.firstName,
+                            accountType: user.accountType
                         }
                     });
                 }
@@ -1535,7 +1574,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             try {
                 const currentUser = await storage.getUser(userId);
                 if (currentUser) {
-                res.json({
+                    res.json({
                         id: currentUser.id,
                         email: currentUser.email,
                         name: currentUser.firstName,
@@ -1553,16 +1592,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(401).json({ error: 'Not authenticated' });
         }
     });
-    
+
     // Token-based current user
     app.get('/api/auth/currentUser-token', isAuthenticatedToken, async (req, res) => {
         try {
             const userId = req.user?.userId;
-            
+
             if (!userId) {
                 return res.status(401).json({ error: 'No user ID in token' });
             }
-            
+
             const currentUser = await storage.getUser(userId);
             if (currentUser) {
                 res.json({
@@ -1612,7 +1651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Get facilities
             const facilities = await storage.getAllFacilities();
             const facility = facilities[0]; // For now, get the first facility
-            
+
             if (!facility) {
                 res.status(500).json({ error: 'No facility found' });
                 return;
@@ -1756,7 +1795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Create Checkout Session
-    app.post("/api/billing/checkout-session", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/checkout-session", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const { priceId, customerEmail, metadata, couponId } = req.body;
             const userId = req.user?.id;
@@ -1804,7 +1843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Create Customer Portal Session
-    app.post("/api/billing/portal-session", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/portal-session", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
 
@@ -1831,7 +1870,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get subscription details
-    app.get("/api/billing/subscription", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.get("/api/billing/subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const user = await storage.getUser(userId);
@@ -1866,7 +1905,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Cancel subscription
-    app.post("/api/billing/cancel-subscription", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/cancel-subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const { cancelAtPeriodEnd = true } = req.body;
@@ -1898,7 +1937,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Reactivate subscription
-    app.post("/api/billing/reactivate-subscription", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/reactivate-subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const user = await storage.getUser(userId);
@@ -1928,7 +1967,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get billing history
-    app.get("/api/billing/invoices", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.get("/api/billing/invoices", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const user = await storage.getUser(userId);
@@ -1990,7 +2029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Create customer
-    app.post("/api/billing/customer", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/customer", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const { email, name, phone } = req.body;
@@ -2026,7 +2065,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Update payment method
-    app.post("/api/billing/payment-method", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/billing/payment-method", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const { paymentMethodId } = req.body;
@@ -2059,7 +2098,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get payment methods
-    app.get("/api/billing/payment-methods", isAuthenticated, async (req: Request, res: Response): Promise<any> => {
+    app.get("/api/billing/payment-methods", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.id;
             const user = await storage.getUser(userId);
@@ -2135,7 +2174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
                 case 'customer.subscription.deleted':
                     const deletedSubscription = event.data.object as Stripe.Subscription;
-                    console.log('❌ Subscription deleted:', deletedSubscription.id);
+                    console.log('Subscription deleted:', deletedSubscription.id);
 
                     const deletedUserId = deletedSubscription.metadata?.userId;
                     if (deletedUserId) {
@@ -2145,12 +2184,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
                 case 'invoice.payment_succeeded':
                     const invoice = event.data.object as Stripe.Invoice;
-                    console.log('💰 Invoice payment succeeded:', invoice.id);
+                    console.log('Invoice payment succeeded:', invoice.id);
                     break;
 
                 case 'invoice.payment_failed':
                     const failedInvoice = event.data.object as Stripe.Invoice;
-                    console.log('❌ Invoice payment failed:', failedInvoice.id);
+                    console.log('Invoice payment failed:', failedInvoice.id);
 
                     const failedUserId = failedInvoice.metadata?.userId;
                     if (failedUserId) {
@@ -2257,16 +2296,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else {
                 // Create new facility if no id provided
                 facility = await storage.createFacility({
-                    name,
-                    address,
-                    phone,
+                    name: "",
+                    address: "",
+                    phone: "",
                     adminEmail: email,
-                    tagline,
-                    logoUrl,
-                    brandColor,
-                    monthlyPrice: "25",
+                    tagline: "",
+                    logoUrl: "",
+                    brandColor: "#3B82F6",
+                    monthlyPrice: "",
                     promoCode: "",
-                    subscriptionTier: "premium"
+                    subscriptionTier: "basic"
                 });
             }
 
@@ -2421,34 +2460,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get available invite packages for a facility
     app.get("/api/facility/invite-packages", async (req, res) => {
         try {
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
-
-            if (!facility) {
-                res.status(404).json({ message: "Facility not found" });
-                return;
+            const facilityId = req.query.facilityId as string;
+            if (!facilityId) {
+                return res.status(400).json({ message: "facilityId is required" });
             }
-
             // Get or create default packages for this facility
-            const packages = await storage.getFacilityInvitePackages(facility.id);
-
-            // If no packages exist, create default ones
+            const packages = await storage.getFacilityInvitePackages(facilityId);
             if (packages.length === 0) {
                 const defaultPackages = [
-                    { inviteCount: 10, priceInCents: 10000, packageName: "10 Invites Package" }, // $100
-                    { inviteCount: 25, priceInCents: 22500, packageName: "25 Invites Package" }, // $225
-                    { inviteCount: 50, priceInCents: 40000, packageName: "50 Invites Package" }, // $400
+                    { inviteCount: 10, priceInCents: 10000, packageName: "10 Invites Package" },
+                    { inviteCount: 25, priceInCents: 22500, packageName: "25 Invites Package" },
+                    { inviteCount: 50, priceInCents: 40000, packageName: "50 Invites Package" },
                 ];
-
                 for (const pkg of defaultPackages) {
                     await storage.createFacilityInvitePackage({
-                        facilityId: facility.id,
-                        ...pkg
+                        facilityId,
+                        ...pkg,
+                        isActive: true
                     });
                 }
-
-                // Fetch the created packages
-                const createdPackages = await storage.getFacilityInvitePackages(facility.id);
+                const createdPackages = await storage.getFacilityInvitePackages(facilityId);
                 res.json(createdPackages);
             } else {
                 res.json(packages);
@@ -2509,10 +2540,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 },
             };
 
-            console.log('🛒 Creating Stripe checkout session with params:', JSON.stringify(sessionParams, null, 2));
+            console.log('Creating Stripe checkout session with params:', JSON.stringify(sessionParams, null, 2));
 
             const session = await stripe.checkout.sessions.create(sessionParams);
-            console.log('✅ Stripe session created:', session.id);
+            console.log('Stripe session created:', session.id);
 
             // Create purchase record
             const purchase = await storage.createFacilityInvitePurchase({
@@ -2524,7 +2555,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 status: 'pending'
             });
 
-            console.log('📝 Purchase record created:', purchase.id);
+            console.log('Purchase record created:', purchase.id);
 
             res.json({ sessionId: session.id, url: session.url });
         } catch (error) {
@@ -2536,15 +2567,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get facility's invite purchases
     app.get("/api/facility/invite-purchases", async (req, res) => {
         try {
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
-
-            if (!facility) {
-                res.status(404).json({ message: "Facility not found" });
-                return;
+            const facilityId = req.query.facilityId as string;
+            if (!facilityId) {
+                return res.status(400).json({ message: "facilityId is required" });
             }
-
-            const purchases = await storage.getFacilityInvitePurchases(facility.id);
+            const purchases = await storage.getFacilityInvitePurchases(facilityId);
             res.json(purchases);
         } catch (error) {
             console.error("Error fetching invite purchases:", error);
@@ -2555,15 +2582,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get facility's available invites
     app.get("/api/facility/available-invites", async (req, res) => {
         try {
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
-
-            if (!facility) {
-                res.status(404).json({ message: "Facility not found" });
-                return;
+            const facilityId = req.query.facilityId as string;
+            if (!facilityId) {
+                return res.status(400).json({ message: "facilityId is required" });
             }
-
-            const invites = await storage.getFacilityAvailableInvites(facility.id);
+            const invites = await storage.getFacilityAvailableInvites(facilityId);
             res.json(invites);
         } catch (error) {
             console.error("Error fetching available invites:", error);
@@ -2654,10 +2677,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
 
             if (result.success) {
-                res.json({ 
-                    message: "Invite used successfully", 
+                res.json({
+                    message: "Invite used successfully",
                     facility: result.facility,
-                    user: result.user 
+                    user: result.user,
+                    // patient: result?.patient
                 });
             } else {
                 res.status(400).json({ message: result.message });

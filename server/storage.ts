@@ -49,7 +49,7 @@ export interface IStorage {
   upsertUser(user: UpsertUser): Promise<User>;
 
   // Patient operations
-  getAllPatients(): Promise<Patient[]>;
+  getAllPatients(filters?: { userId?: string; facilityId?: string }): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
   createPatient(data: InsertPatient): Promise<Patient>;
   updatePatientStatus(id: number, status: string): Promise<Patient>;
@@ -98,7 +98,7 @@ export interface IStorage {
   createFacilityInvitePurchase(data: InsertFacilityInvitePurchase): Promise<FacilityInvitePurchase>;
   getFacilityAvailableInvites(facilityId: string): Promise<FacilityInvite[]>;
   createFacilityInvites(facilityId: string, purchaseId: number, inviteCount: number): Promise<FacilityInvite[]>;
-  useFacilityInvite(inviteCode: string, facilityId: string, userInfo: { email?: string; phone?: string; name?: string }): Promise<{ success: boolean; message?: string; facility?: Facility; user?: User }>;
+  useFacilityInvite(inviteCode: string, facilityId: string, userInfo: { email?: string; phone?: string; name?: string }): Promise<{ success: boolean; message?: string; facility?: Facility; user?: User; patient?: Patient }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -124,8 +124,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Patient operations
-  async getAllPatients(): Promise<Patient[]> {
-    return db.select().from(patients).orderBy(desc(patients.lastInteraction));
+  async getAllPatients(filters?: { userId?: string; facilityId?: string }): Promise<Patient[]> {
+    return db
+      .select()
+      .from(patients)
+      .where(
+        and(
+          filters?.userId ? eq(patients.userId, filters.userId) : undefined,
+          filters?.facilityId ? eq(patients.facilityId, filters.facilityId) : undefined,
+        )
+      )
+      .orderBy(desc(patients.lastInteraction));
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {
@@ -315,7 +324,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createFacility(data: Partial<Facility>): Promise<Facility> {
-    const [facility] = await db.insert(facilities).values(data as Facility).returning();
+    // Generate a unique facility ID if not provided
+    const facilityId = data.id || `facility_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const [facility] = await db.insert(facilities).values({
+      ...data,
+      id: facilityId
+    } as Facility).returning();
     return facility;
   }
 
@@ -451,6 +466,43 @@ export class DatabaseStorage implements IStorage {
         }
       } else {
         return { success: false, message: "Email or phone number is required" };
+      }
+
+      // Update user to link to facility
+      await db.update(users)
+        .set({
+          facilityId: facilityId,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+
+      // Check if patient record already exists for this user
+      const [existingPatient] = await db.select().from(patients).where(eq(patients.userId, user.id));
+      
+      let patient: Patient;
+      if (existingPatient) {
+        // Update existing patient record to link to facility
+        const [updatedPatient] = await db.update(patients)
+          .set({
+            facilityId: facilityId,
+            updatedAt: new Date(),
+          })
+          .where(eq(patients.userId, user.id))
+          .returning();
+        patient = updatedPatient;
+      } else {
+        // Create new patient record
+        const [newPatient] = await db.insert(patients).values({
+          facilityId: facilityId,
+          userId: user.id,
+          firstName: user.firstName || userInfo.name?.split(' ')[0] || 'Invited',
+          lastName: user.lastName || userInfo.name?.split(' ').slice(1).join(' ') || 'User',
+          status: 'ok',
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }).returning();
+        patient = newPatient;
       }
 
       // Mark invite as used
