@@ -1291,14 +1291,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Check if user phone number already exists
             const existing = await db.select().from(users).where(eq(users.phoneNumber, normalizedPhone));
             if (existing.length > 0) {
-                return res.status(409).json({ 
-                    message: "Phone number already registered" 
+                return res.status(409).json({
+                    message: "Phone number already registered"
                 });
             }
 
             // Check user email address already exists
             const existingEmail = await db.select().from(users).where(eq(users.email, emailCheck))
-            if(existingEmail.length > 0){
+            if (existingEmail.length > 0) {
                 return res.status(409).json({
                     message: "Email Id already registered"
                 })
@@ -1308,8 +1308,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             let facilityStaffFacilityId = null;
             if (accountType === "Facility Staff") {
                 if (!facilityName) {
-                    return res.status(400).json({ 
-                        message: "Facility Name is required for Facility Staff" 
+                    return res.status(400).json({
+                        message: "Facility Name is required for Facility Staff"
                     });
                 }
 
@@ -2242,64 +2242,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // ==================== Facility Management ====================== //
 
     // Get facility information
-    app.get("/api/facility", async (req, res) => {
+    app.get("/api/facility", isAuthenticatedToken, async (req, res) => {
         try {
-            const facilities = await storage.getAllFacilities();
-            console.log("All facilities:", facilities);
-            let facility = facilities[0]; // For now, get the first facility
-
-            // If no facility exists, create a default one
-            if (!facility) {
-                console.log("No facility found, creating default facility");
-                facility = await storage.createFacility({
-                    name: "Default Facility",
-                    address: "",
-                    phone: "",
-                    adminEmail: "",
-                    tagline: "",
-                    logoUrl: "",
-                    brandColor: "#3B82F6",
-                    monthlyPrice: "25",
-                    promoCode: "",
-                    subscriptionTier: "premium"
-                });
-                console.log("Created default facility:", facility);
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                res.status(401).json({ message: "Unauthorized" });
+                return;
             }
 
-            console.log("Selected facility:", facility);
-            res.json(facility || {});
-        } catch (error) {
-            console.error("Error fetching facility:", error);
-            res.status(500).json({ message: "Failed to fetch facility" });
-        }
-    });
-
-    // Update facility information
-    app.post("/api/facility", async (req, res) => {
-        try {
-            const { id, name, address, phone, email, tagline, logoUrl, brandColor } = req.body;
-            console.log("Facility update request:", { id, name, address, phone, email, tagline, logoUrl, brandColor });
+            // Load the user and their facility
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
 
             let facility;
-            if (id) {
-                // Update existing facility
-                facility = await storage.updateFacility({
-                    id,
-                    name,
-                    address,
-                    phone,
-                    adminEmail: email,
-                    tagline,
-                    logoUrl,
-                    brandColor,
-                });
-            } else {
-                // Create new facility if no id provided
+            if (user?.facilityId) {
+                const [existingFacility] = await db.select().from(facilities).where(eq(facilities.id, user.facilityId));
+                facility = existingFacility;
+            }
+
+            // If no facility assigned or not found, create a default basic facility and link to user
+            if (!facility) {
+                console.log("No facility found for user, creating default basic facility and linking to user");
                 facility = await storage.createFacility({
                     name: "",
                     address: "",
                     phone: "",
-                    adminEmail: email,
+                    adminEmail: user?.email || "",
                     tagline: "",
                     logoUrl: "",
                     brandColor: "#3B82F6",
@@ -2307,15 +2274,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     promoCode: "",
                     subscriptionTier: "basic"
                 });
+
+                await db.update(users)
+                    .set({ facilityId: facility.id, updatedAt: new Date() })
+                    .where(eq(users.id, userId));
             }
 
-            console.log("Facility updated/created successfully:", facility);
+            res.json(facility || {});
+        } catch (error) {
+            console.error("Error fetching facility:", error);
+            res.status(500).json({ message: "Failed to fetch facility" });
+        }
+    });
+
+    // Create or update facility for current user
+    app.post("/api/facility", isAuthenticatedToken, async (req, res) => {
+        try {
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                res.status(401).json({ message: "Unauthorized" });
+                return;
+            }
+
+            const { name, address, phone, email, tagline, logoUrl, brandColor, monthlyPrice, promoCode, subscriptionTier } = req.body;
+
+            console.log("Facility upsert request:", { name, address, phone, email, tagline, logoUrl, brandColor, monthlyPrice, promoCode, subscriptionTier });
+
+            // Get current user to check if facility exists
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+
+            let facility;
+            if (user?.facilityId) {
+                // Update existing facility
+                facility = await storage.updateFacility({
+                    id: user.facilityId,
+                    name: name ?? "",
+                    address: address ?? "",
+                    phone: phone ?? "",
+                    adminEmail: email ?? (user?.email as string | undefined) ?? "",
+                    tagline: tagline ?? "",
+                    logoUrl: logoUrl ?? "",
+                    brandColor: brandColor ?? "#3B82F6",
+                    monthlyPrice: monthlyPrice ?? undefined,
+                    promoCode: promoCode ?? undefined,
+                });
+                console.log("Facility updated successfully:", facility);
+                res.json(facility);
+            } else {
+                // Create new basic facility and link to user
+                facility = await storage.createFacility({
+                    name: name || "",
+                    address: address || "",
+                    phone: phone || "",
+                    adminEmail: email || user?.email || "",
+                    tagline: tagline || "",
+                    logoUrl: logoUrl || "",
+                    brandColor: brandColor || "#3B82F6",
+                    monthlyPrice: monthlyPrice || "",
+                    promoCode: promoCode || "",
+                    subscriptionTier: subscriptionTier || "basic"
+                });
+
+                await db.update(users)
+                    .set({ facilityId: facility.id, updatedAt: new Date() })
+                    .where(eq(users.id, userId));
+
+                console.log("Facility created and linked to user:", facility);
+                res.status(201).json(facility);
+            }
+        } catch (error) {
+            console.error("Error creating facility:", error);
+            res.status(500).json({ message: "Failed to create facility" });
+        }
+    });
+
+    // Update an existing facility
+    app.put("/api/facility/:id", async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { name, address, phone, email, tagline, logoUrl, brandColor } = req.body;
+
+            console.log("Facility update request:", { id, name, address, phone, email, tagline, logoUrl, brandColor });
+
+            const facility = await storage.updateFacility({
+                id,
+                name,
+                address,
+                phone,
+                adminEmail: email,
+                tagline,
+                logoUrl,
+                brandColor
+            });
+
+            console.log("Facility updated successfully:", facility);
             res.json(facility);
         } catch (error) {
             console.error("Error updating facility:", error);
             res.status(500).json({ message: "Failed to update facility" });
         }
     });
+
 
     // Logo upload endpoint
     app.post("/api/facility/logo", upload.single("logo"), (req, res): void => {
@@ -2329,10 +2388,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get facility billing settings
-    app.get("/api/facility/billing", async (req, res) => {
+    app.get("/api/facility/billing", isAuthenticatedToken, async (req, res) => {
         try {
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                res.status(401).json({ message: "Unauthorized" });
+                return;
+            }
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            let facility;
+            if (user?.facilityId) {
+                const [existingFacility] = await db.select().from(facilities).where(eq(facilities.id, user.facilityId));
+                facility = existingFacility;
+            }
 
             // Use the stored monthly price or fallback to tier-based calculation
             let monthlyPrice = facility?.monthlyPrice || "25"; // default
@@ -2358,7 +2427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Update facility billing settings
-    app.post("/api/facility/billing", async (req, res) => {
+    app.post("/api/facility/billing", isAuthenticatedToken, async (req, res) => {
         try {
             const { monthlyPrice, promoCode } = req.body;
 
@@ -2368,63 +2437,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                res.status(401).json({ message: "Unauthorized" });
+                return;
+            }
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            let facility;
+            if (user?.facilityId) {
+                const [existingFacility] = await db.select().from(facilities).where(eq(facilities.id, user.facilityId));
+                facility = existingFacility;
+            }
 
             if (!facility) {
                 res.status(404).json({ message: "Facility not found" });
                 return;
             }
 
-            // Create or update Stripe product and price
+            // Create or update Stripe product and price (skip in dev if key missing)
             let stripeProductId = facility.stripeProductId;
             let stripePriceId = facility.stripePriceId;
 
-            if (!stripeProductId) {
-                // Create new Stripe product
-                const product = await stripe.products.create({
-                    name: `${facility.name} Subscription`,
-                    description: `Monthly subscription for ${facility.name}`,
-                    metadata: {
-                        facilityId: facility.id,
-                    },
-                });
-                stripeProductId = product.id;
-            }
+            const stripeEnabled = !!process.env.STRIPE_SECRET_KEY;
+            if (stripeEnabled) {
+                if (!stripeProductId) {
+                    const product = await stripe.products.create({
+                        name: `${facility.name} Subscription`,
+                        description: `Monthly subscription for ${facility.name}`,
+                        metadata: {
+                            facilityId: facility.id,
+                        },
+                    });
+                    stripeProductId = product.id;
+                }
 
-            // Create new price for the product
-            const price = await stripe.prices.create({
-                product: stripeProductId,
-                unit_amount: Number(monthlyPrice) * 100, // Convert to cents
-                currency: 'usd',
-                recurring: {
-                    interval: 'month',
-                },
-                metadata: {
-                    facilityId: facility.id,
-                },
-            });
-            stripePriceId = price.id;
+                const price = await stripe.prices.create({
+                    product: stripeProductId,
+                    unit_amount: Number(monthlyPrice) * 100,
+                    currency: 'usd',
+                    recurring: { interval: 'month' },
+                    metadata: { facilityId: facility.id },
+                });
+                stripePriceId = price.id;
+            }
 
             // Create or update Stripe coupon if promo code provided
             let stripeCouponId = null;
-            if (promoCode && promoCode.trim()) {
+            if (promoCode && promoCode.trim() && stripeEnabled) {
                 try {
-                    // Check if coupon already exists
                     const existingCoupons = await stripe.coupons.list({ limit: 100 });
                     const existingCoupon = existingCoupons.data.find(c => c.name === promoCode);
-
                     if (existingCoupon) {
                         stripeCouponId = existingCoupon.id;
                     } else {
-                        // Create new coupon
                         const coupon = await stripe.coupons.create({
                             name: promoCode,
-                            percent_off: 100, // 100% off for free access
+                            percent_off: 100,
                             duration: 'forever',
-                            metadata: {
-                                facilityId: facility.id,
-                            },
+                            metadata: { facilityId: facility.id },
                         });
                         stripeCouponId = coupon.id;
                     }
@@ -2458,14 +2529,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // ==================== Flat Payment Invite System ====================== //
 
     // Get available invite packages for a facility
-    app.get("/api/facility/invite-packages", async (req, res) => {
+    app.get("/api/facility/invite-packages", isAuthenticatedToken, async (req, res) => {
         try {
-            const facilityId = req.query.facilityId as string;
-            if (!facilityId) {
-                return res.status(400).json({ message: "facilityId is required" });
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(400).json({ message: "Unauthorized" });
             }
+
+            // Get user's facility
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
+            }
+
             // Get or create default packages for this facility
-            const packages = await storage.getFacilityInvitePackages(facilityId);
+            const packages = await storage.getFacilityInvitePackages(user.facilityId);
             if (packages.length === 0) {
                 const defaultPackages = [
                     { inviteCount: 10, priceInCents: 10000, packageName: "10 Invites Package" },
@@ -2474,12 +2552,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ];
                 for (const pkg of defaultPackages) {
                     await storage.createFacilityInvitePackage({
-                        facilityId,
+                        facilityId: user.facilityId,
                         ...pkg,
                         isActive: true
                     });
                 }
-                const createdPackages = await storage.getFacilityInvitePackages(facilityId);
+                const createdPackages = await storage.getFacilityInvitePackages(user.facilityId);
                 res.json(createdPackages);
             } else {
                 res.json(packages);
@@ -2490,8 +2568,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Create Stripe checkout session for invite package purchase
-    app.post("/api/facility/purchase-invites", async (req, res) => {
+    // Create Stripe checkout session for invite package purchase (with dev bypass)
+    app.post("/api/facility/purchase-invites", isAuthenticatedToken, async (req, res) => {
         try {
             const { packageId } = req.body;
 
@@ -2500,8 +2578,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                res.status(401).json({ message: "Unauthorized" });
+                return;
+            }
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            let facility;
+            if (user?.facilityId) {
+                const [existingFacility] = await db.select().from(facilities).where(eq(facilities.id, user.facilityId));
+                facility = existingFacility;
+            }
 
             if (!facility) {
                 res.status(404).json({ message: "Facility not found" });
@@ -2515,6 +2603,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
+            const stripeEnabled = !!process.env.STRIPE_SECRET_KEY;
+
+            if (!stripeEnabled) {
+                res.status(500).json({ message: "Stripe is not configured" });
+                return;
+            }
+
+            // const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
             // Create Stripe checkout session
             const sessionParams: Stripe.Checkout.SessionCreateParams = {
                 payment_method_types: ['card'],
@@ -2530,8 +2626,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     quantity: 1,
                 }],
                 mode: 'payment',
-                success_url: `http://localhost:3000/dashboard/settings?success=true&package_id=${packageId}`,
-                cancel_url: `http://localhost:3000/dashboard/settings?canceled=true`,
+                success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/settings?success=true&package_id=${packageId}`,
+                cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/settings?canceled=true`,
                 metadata: {
                     facilityId: facility.id,
                     packageId: packageId.toString(),
@@ -2565,13 +2661,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get facility's invite purchases
-    app.get("/api/facility/invite-purchases", async (req, res) => {
+    app.get("/api/facility/invite-purchases", isAuthenticatedToken, async (req, res) => {
         try {
-            const facilityId = req.query.facilityId as string;
-            if (!facilityId) {
-                return res.status(400).json({ message: "facilityId is required" });
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(400).json({ message: "Unauthorized" });
             }
-            const purchases = await storage.getFacilityInvitePurchases(facilityId);
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
+            }
+            const purchases = await storage.getFacilityInvitePurchases(user.facilityId);
             res.json(purchases);
         } catch (error) {
             console.error("Error fetching invite purchases:", error);
@@ -2580,13 +2680,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Get facility's available invites
-    app.get("/api/facility/available-invites", async (req, res) => {
+    app.get("/api/facility/available-invites", isAuthenticatedToken, async (req, res) => {
         try {
-            const facilityId = req.query.facilityId as string;
-            if (!facilityId) {
-                return res.status(400).json({ message: "facilityId is required" });
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(400).json({ message: "Unauthorized" });
             }
-            const invites = await storage.getFacilityAvailableInvites(facilityId);
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
+            }
+            const invites = await storage.getFacilityAvailableInvites(user.facilityId);
             res.json(invites);
         } catch (error) {
             console.error("Error fetching available invites:", error);
@@ -2595,7 +2699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // Create invite codes for a purchase
-    app.post("/api/facility/create-invites", async (req, res) => {
+    app.post("/api/facility/create-invites", isAuthenticatedToken, async (req, res) => {
         try {
             const { purchaseId, inviteCount } = req.body;
 
@@ -2604,16 +2708,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(400).json({ message: "Unauthorized" });
+            }
 
-            if (!facility) {
-                res.status(404).json({ message: "Facility not found" });
-                return;
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
             }
 
             // Generate invite codes
-            const invites = await storage.createFacilityInvites(facility.id, purchaseId, inviteCount);
+            const invites = await storage.createFacilityInvites(user.facilityId, purchaseId, inviteCount);
 
             res.json({
                 message: "Invites created successfully",
@@ -2636,6 +2742,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
+            console.log('🧪 Manual webhook test for session:', sessionId);
+
+            // Find the purchase by session ID
+            const [purchase] = await db
+                .select()
+                .from(facilityInvitePurchases)
+                .where(eq(facilityInvitePurchases.stripeSessionId, sessionId));
+
+            if (!purchase) {
+                console.error('❌ Purchase not found for session:', sessionId);
+                return res.status(404).json({ message: "Purchase not found for this session ID" });
+            }
+
+            console.log('✅ Found purchase:', purchase.id, 'for facility:', purchase.facilityId);
+
             // Update the purchase status to completed manually
             await db.update(facilityInvitePurchases)
                 .set({
@@ -2644,11 +2765,126 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 })
                 .where(eq(facilityInvitePurchases.stripeSessionId, sessionId));
 
-            console.log('✅ Manual webhook test: Purchase marked as completed for session:', sessionId);
-            res.json({ message: "Purchase status updated to completed" });
+            console.log('✅ Purchase marked as completed');
+
+            // Check if invites already exist
+            const existingInvites = await db
+                .select()
+                .from(facilityInvites)
+                .where(eq(facilityInvites.purchaseId, purchase.id));
+
+            console.log('📋 Existing invites count:', existingInvites.length);
+
+            if (!existingInvites || existingInvites.length === 0) {
+                console.log('🧾 Creating invites for purchase:', purchase.id);
+                console.log('🎫 Invite count to create:', purchase.inviteCount);
+                console.log('🏥 Facility ID for invites:', purchase.facilityId);
+                
+                const createdInvites = await storage.createFacilityInvites(
+                    purchase.facilityId, 
+                    purchase.id, 
+                    purchase.inviteCount
+                );
+                
+                console.log('✅ Invites created successfully:', createdInvites.length);
+                console.log('🎫 First few invite codes:', createdInvites.slice(0, 3).map(invite => invite.inviteCode));
+                
+                res.json({ 
+                    message: "Purchase status updated to completed and invites created",
+                    purchaseId: purchase.id,
+                    invitesCreated: createdInvites.length,
+                    sampleInviteCodes: createdInvites.slice(0, 3).map(invite => invite.inviteCode)
+                });
+            } else {
+                console.log('ℹ️ Invites already exist for purchase:', purchase.id);
+                console.log('🎫 Existing invite codes:', existingInvites.slice(0, 3).map(invite => invite.inviteCode));
+                
+                res.json({ 
+                    message: "Purchase status updated to completed, invites already exist",
+                    purchaseId: purchase.id,
+                    existingInvites: existingInvites.length,
+                    sampleInviteCodes: existingInvites.slice(0, 3).map(invite => invite.inviteCode)
+                });
+            }
         } catch (error) {
             console.error("Error in manual webhook test:", error);
-            res.status(500).json({ message: "Failed to update purchase status" });
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to update purchase status", error: errorMessage });
+        }
+    });
+
+    // Check invite purchase status and available invites
+    app.get("/api/facility/invite-status", isAuthenticatedToken, async (req, res) => {
+        try {
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(401).json({ message: "Unauthorized" });
+            }
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
+            }
+
+            // Get all purchases for this facility
+            const purchases = await db
+                .select()
+                .from(facilityInvitePurchases)
+                .where(eq(facilityInvitePurchases.facilityId, user.facilityId));
+
+            // Get all available invites for this facility
+            const availableInvites = await db
+                .select()
+                .from(facilityInvites)
+                .where(eq(facilityInvites.facilityId, user.facilityId));
+
+            // Get all invite packages
+            const packages = await db
+                .select()
+                .from(facilityInvitePackages)
+                .where(eq(facilityInvitePackages.facilityId, user.facilityId));
+
+            res.json({
+                facilityId: user.facilityId,
+                purchases: purchases.map(p => ({
+                    id: p.id,
+                    packageId: p.packageId,
+                    stripeSessionId: p.stripeSessionId,
+                    status: p.status,
+                    inviteCount: p.inviteCount,
+                    totalPaidInCents: p.totalPaidInCents,
+                    purchasedAt: p.purchasedAt,
+                    completedAt: p.completedAt
+                })),
+                availableInvites: availableInvites.map(i => ({
+                    id: i.id,
+                    inviteCode: i.inviteCode,
+                    purchaseId: i.purchaseId,
+                    status: i.status,
+                    usedByUserId: i.usedByUserId,
+                    usedAt: i.usedAt,
+                    createdAt: i.createdAt
+                })),
+                packages: packages.map(p => ({
+                    id: p.id,
+                    packageName: p.packageName,
+                    inviteCount: p.inviteCount,
+                    priceInCents: p.priceInCents,
+                    isActive: p.isActive
+                })),
+                summary: {
+                    totalPurchases: purchases.length,
+                    completedPurchases: purchases.filter(p => p.status === 'completed').length,
+                    pendingPurchases: purchases.filter(p => p.status === 'pending').length,
+                    totalInvites: availableInvites.length,
+                    usedInvites: availableInvites.filter(i => i.status === 'used').length,
+                    availableInvites: availableInvites.filter(i => i.status === 'unused').length
+                }
+            });
+        } catch (error) {
+            console.error("Error checking invite status:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to check invite status", error: errorMessage });
         }
     });
 
