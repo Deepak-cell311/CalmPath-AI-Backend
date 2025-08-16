@@ -11,14 +11,11 @@ import stripeRoutes from "./stripe";
 
 const app = express();
 
-// Raw body for Stripe webhook
-app.use('/webhook', express.raw({ type: 'application/json' }));
-
 // --- CORS: Allow credentials and set correct origin for production ---
 const allowedOrigins = [
-  "https://app.calmpath.ai", 
+  "https://app.calmpath.ai",
   "https://calm-path-ai.vercel.app",
-  "http://localhost:3000"            
+  "http://localhost:3000"
 ];
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback: any) {
@@ -36,8 +33,25 @@ app.use(cors(corsOptions));
 // Respond to preflight (OPTIONS) requests
 app.options("*", cors(corsOptions));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Raw body for Stripe webhooks - must come BEFORE express.json()
+app.use('/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
+
+// JSON parsing middleware - only for non-webhook routes
+app.use((req, res, next) => {
+  if (req.path.startsWith('/webhook') || req.path.startsWith('/api/billing/webhook')) {
+    return next();
+  }
+  express.json()(req, res, next);
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith('/webhook') || req.path.startsWith('/api/billing/webhook')) {
+    return next();
+  }
+  express.urlencoded({ extended: false })(req, res, next);
+});
+
 app.use('/api/stripe', stripeRoutes);
 app.post('/webhook', webhookHandler as any);
 

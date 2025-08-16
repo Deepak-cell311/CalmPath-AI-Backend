@@ -505,11 +505,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             // Generate a simple token
-            const token = Buffer.from(JSON.stringify({
+            const tokenData = {
                 userId: user.id,
                 email: user.email,
                 timestamp: Date.now()
-            })).toString('base64');
+            };
+            console.log("Login endpoint: Token data:", tokenData);
+            console.log("Login endpoint: Current time:", new Date().toISOString());
+            console.log("Login endpoint: Timestamp value:", tokenData.timestamp);
+            
+            const token = Buffer.from(JSON.stringify(tokenData)).toString('base64');
+            console.log("Login endpoint: Generated token:", token.substring(0, 20) + "...");
 
             res.json({
                 success: true,
@@ -535,27 +541,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.get("/api/auth/user-token", async (req, res) => {
         try {
             const authHeader = req.headers.authorization;
+            console.log("User-token endpoint: Auth header:", authHeader ? authHeader.substring(0, 20) + "..." : "none");
 
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                console.log("User-token endpoint: No valid auth header");
                 return res.status(401).json({ message: "No token provided" });
             }
 
             const token = authHeader.substring(7); // Remove 'Bearer '
+            console.log("User-token endpoint: Token received:", token.substring(0, 20) + "...");
 
             try {
                 const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+                console.log("User-token endpoint: Token decoded:", decoded);
+                console.log("User-token endpoint: Decoded token type:", typeof decoded);
+                console.log("User-token endpoint: Decoded token keys:", Object.keys(decoded));
+                console.log("User-token endpoint: Decoded timestamp:", decoded.timestamp);
+                console.log("User-token endpoint: Decoded timestamp as date:", new Date(decoded.timestamp).toISOString());
+                console.log("User-token endpoint: Current time:", new Date().toISOString());
+                
                 const userId = decoded.userId;
+                console.log("User-token endpoint: Extracted userId:", userId, "type:", typeof userId);
 
                 if (!userId) {
+                    console.log("User-token endpoint: No userId in token");
                     return res.status(401).json({ message: "Invalid token" });
                 }
 
+                console.log("User-token endpoint: Looking up user:", userId);
                 const user = await storage.getUser(userId);
 
                 if (!user) {
+                    console.log("User-token endpoint: User not found:", userId);
                     return res.status(404).json({ message: "User not found" });
                 }
 
+                console.log("User-token endpoint: User found:", user.id, user.email);
                 res.json({
                     id: user.id,
                     email: user.email,
@@ -1444,13 +1465,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Handle invite code if provided
             if (inviteCode && inviteCode.trim()) {
                 try {
-                    const facilities = await storage.getAllFacilities();
-                    const facility = facilities[0]; // For now, get the first facility
-
-                    if (!facility) {
-                        res.status(500).json({ error: 'No facility found' });
+                    // First, find the invite to get the correct facility
+                    const [invite] = await db.select().from(facilityInvites).where(eq(facilityInvites.inviteCode, inviteCode.trim()));
+                    
+                    if (!invite) {
+                        res.status(400).json({ error: 'Invalid invite code' });
                         return;
                     }
+
+                    if (invite.status !== 'unused') {
+                        res.status(400).json({ error: 'Invite code has already been used' });
+                        return;
+                    }
+
+                    if (invite.expiresAt && new Date() > invite.expiresAt) {
+                        res.status(400).json({ error: 'Invite code has expired' });
+                        return;
+                    }
+
+                    // Get the facility from the invite
+                    const [facility] = await db.select().from(facilities).where(eq(facilities.id, invite.facilityId));
+                    
+                    if (!facility) {
+                        res.status(500).json({ error: 'Facility not found for this invite' });
+                        return;
+                    }
+
+                    console.log('Using invite code for facility:', facility.id, 'with user:', user.id);
 
                     // Use the invite code
                     const inviteResult = await storage.useFacilityInvite(inviteCode.trim(), facility.id, {
@@ -1464,15 +1505,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
                         return;
                     }
 
-                    // Update user to mark that they used an invite code
+                    // Update user to mark that they used an invite code and link to facility
                     await db.update(users)
                         .set({
                             usedInviteCode: true,
+                            facilityId: facility.id,
                             updatedAt: new Date()
                         })
                         .where(eq(users.id, user.id));
 
-                    console.log("User used invite code successfully:", user.id);
+                    console.log("User used invite code successfully:", user.id, "for facility:", facility.id);
                 } catch (error) {
                     console.error('Error processing invite code:', error);
                     res.status(500).json({ error: 'Failed to process invite code' });
@@ -1625,6 +1667,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
             const { email, inviteCode, accountType } = req.body;
 
+            console.log('Invite login attempt:', { email, inviteCode, accountType });
+
             if (!email || !inviteCode || !accountType) {
                 res.status(400).json({ error: 'Email, inviteCode, and accountType are required' });
                 return;
@@ -1638,6 +1682,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return;
             }
 
+            console.log('User found:', { userId: user.id, accountType: user.accountType });
+
             // Check account type match
             // Allow Family Members to login as Patient (for dual access)
             if (user.accountType !== accountType) {
@@ -1648,14 +1694,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
             }
 
-            // Get facilities
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            console.log('Validating invite code:', inviteCode.trim());
 
-            if (!facility) {
-                res.status(500).json({ error: 'No facility found' });
+            // First, find the invite to get the correct facility
+            const [invite] = await db.select().from(facilityInvites).where(eq(facilityInvites.inviteCode, inviteCode.trim()));
+            
+            console.log('Invite lookup result:', invite ? { 
+                id: invite.id, 
+                status: invite.status, 
+                facilityId: invite.facilityId,
+                expiresAt: invite.expiresAt 
+            } : 'Not found');
+            
+            if (!invite) {
+                res.status(400).json({ error: 'Invalid invite code' });
                 return;
             }
+
+            if (invite.status !== 'unused') {
+                res.status(400).json({ error: 'Invite code has already been used' });
+                return;
+            }
+
+            if (invite.expiresAt && new Date() > invite.expiresAt) {
+                res.status(400).json({ error: 'Invite code has expired' });
+                return;
+            }
+
+            // Get the facility from the invite
+            const [facility] = await db.select().from(facilities).where(eq(facilities.id, invite.facilityId));
+            
+            console.log('Facility lookup result:', facility ? { 
+                id: facility.id, 
+                name: facility.name 
+            } : 'Not found');
+            
+            if (!facility) {
+                res.status(500).json({ error: 'Facility not found for this invite' });
+                return;
+            }
+
+            console.log('Using invite code for facility:', facility.id, 'with user:', user.id);
 
             // Use the invite code
             const inviteResult = await storage.useFacilityInvite(inviteCode.trim(), facility.id, {
@@ -1664,27 +1743,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 name: `${user.firstName} ${user.lastName}`
             });
 
+            console.log('Invite usage result:', inviteResult);
+
             if (!inviteResult.success) {
                 res.status(400).json({ error: inviteResult.message || 'Invalid invite code' });
                 return;
             }
 
-            // Update user to mark that they used an invite code
+            // Update user to mark that they used an invite code, link to facility, and set subscription as active
             await db.update(users)
                 .set({
                     usedInviteCode: true,
+                    facilityId: facility.id,
+                    subscriptionStatus: 'active',
                     updatedAt: new Date()
                 })
                 .where(eq(users.id, user.id));
 
             // Generate a simple token
-            const token = Buffer.from(JSON.stringify({
+            const tokenData = {
                 userId: user.id,
                 email: user.email,
                 timestamp: Date.now()
-            })).toString('base64');
+            };
+            console.log("Invite login endpoint: Token data:", tokenData);
+            console.log("Invite login endpoint: Current time:", new Date().toISOString());
+            console.log("Invite login endpoint: Timestamp value:", tokenData.timestamp);
+            
+            const token = Buffer.from(JSON.stringify(tokenData)).toString('base64');
+            console.log("Invite login endpoint: Generated token:", token.substring(0, 20) + "...");
 
-            console.log("Invite login successful:", user.id);
+            console.log("Invite login successful:", user.id, "for facility:", facility.id);
 
             res.json({
                 success: true,
@@ -1693,9 +1782,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     email: user.email,
                     name: user.firstName,
                     accountType: user.accountType,
-                    usedInviteCode: true
+                    usedInviteCode: true,
+                    facilityId: facility.id,
+                    subscriptionStatus: 'active'
                 },
-                token: token
+                token: token,
+                facility: {
+                    id: facility.id,
+                    name: facility.name
+                }
             });
         } catch (error) {
             console.error('Invite login error:', error);
@@ -1798,7 +1893,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.post("/api/billing/checkout-session", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const { priceId, customerEmail, metadata, couponId } = req.body;
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
 
             if (!priceId || !customerEmail) {
                 return res.status(400).json({ message: "Price ID and customer email are required" });
@@ -1845,7 +1940,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Create Customer Portal Session
     app.post("/api/billing/portal-session", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
 
             // Get user from database to find Stripe customer ID
             const user = await storage.getUser(userId);
@@ -1872,29 +1967,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get subscription details
     app.get("/api/billing/subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
             const user = await storage.getUser(userId);
 
-            if (!user?.stripeSubscriptionId) {
+            // Check if user has a Stripe subscription
+            if (user?.stripeSubscriptionId) {
+                const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+
+                res.json({
+                    subscription: {
+                        id: subscription.id,
+                        status: subscription.status,
+                        currentPeriodStart: (subscription as any).current_period_start,
+                        currentPeriodEnd: (subscription as any).current_period_end,
+                        cancelAtPeriodEnd: (subscription as any).cancel_at_period_end,
+                        items: subscription.items.data.map(item => ({
+                            id: item.id,
+                            price: {
+                                id: item.price.id,
+                                unit_amount: item.price.unit_amount,
+                                currency: item.price.currency,
+                                recurring: item.price.recurring,
+                            },
+                            quantity: item.quantity,
+                        })),
+                    },
+                });
+            }
+            // Check if user used an invite code and has active subscription
+            else if (user?.usedInviteCode && user?.subscriptionStatus === 'active') {
+                res.json({
+                    subscription: {
+                        id: 'invite-access',
+                        status: 'active',
+                        type: 'invite',
+                        message: 'Access granted via facility invite code'
+                    },
+                });
+            }
+            else {
                 return res.status(404).json({ message: "No active subscription found" });
             }
-
-            const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-
-            res.json({
-                subscription: {
-                    id: subscription.id,
-                    status: subscription.status,
-                    currentPeriodStart: (subscription as any).current_period_start,
-                    currentPeriodEnd: (subscription as any).current_period_end,
-                    cancelAtPeriodEnd: (subscription as any).cancel_at_period_end,
-                    items: subscription.items.data.map(item => ({
-                        id: item.id,
-                        priceId: item.price.id,
-                        quantity: item.quantity,
-                    })),
-                }
-            });
         } catch (err: any) {
             console.error("Subscription retrieval error:", err);
             res.status(500).json({
@@ -1907,9 +2020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Cancel subscription
     app.post("/api/billing/cancel-subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
-            const { cancelAtPeriodEnd = true } = req.body;
-
+            const userId = req.user?.userId;
             const user = await storage.getUser(userId);
 
             if (!user?.stripeSubscriptionId) {
@@ -1917,15 +2028,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
 
             const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
-                cancel_at_period_end: cancelAtPeriodEnd,
+                cancel_at_period_end: true,
             });
 
-            // Update user subscription status in database
             await storage.updateUserSubscriptionStatus(userId, subscription.status);
 
             res.json({
-                message: "Subscription cancelled successfully",
-                cancelAtPeriodEnd: (subscription as any).cancel_at_period_end,
+                message: "Subscription will be canceled at the end of the current period",
+                subscription: {
+                    id: subscription.id,
+                    status: subscription.status,
+                    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                },
             });
         } catch (err: any) {
             console.error("Subscription cancellation error:", err);
@@ -1939,23 +2053,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Reactivate subscription
     app.post("/api/billing/reactivate-subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
             const user = await storage.getUser(userId);
 
             if (!user?.stripeSubscriptionId) {
-                return res.status(404).json({ message: "No subscription found" });
+                return res.status(404).json({ message: "No active subscription found" });
             }
 
             const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
                 cancel_at_period_end: false,
             });
 
-            // Update user subscription status in database
             await storage.updateUserSubscriptionStatus(userId, subscription.status);
 
             res.json({
                 message: "Subscription reactivated successfully",
-                cancelAtPeriodEnd: (subscription as any).cancel_at_period_end,
+                subscription: {
+                    id: subscription.id,
+                    status: subscription.status,
+                    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+                },
             });
         } catch (err: any) {
             console.error("Subscription reactivation error:", err);
@@ -1966,10 +2083,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Get billing history
+    // Get invoices
     app.get("/api/billing/invoices", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
             const user = await storage.getUser(userId);
 
             if (!user?.stripeCustomerId) {
@@ -1978,20 +2095,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             const invoices = await stripe.invoices.list({
                 customer: user.stripeCustomerId,
-                limit: 12, // Last 12 invoices
+                limit: 10,
             });
 
             res.json({
                 invoices: invoices.data.map(invoice => ({
                     id: invoice.id,
-                    number: invoice.number,
-                    amountDue: invoice.amount_due,
-                    amountPaid: invoice.amount_paid,
+                    amount_paid: invoice.amount_paid,
+                    currency: invoice.currency,
                     status: invoice.status,
                     created: invoice.created,
-                    dueDate: invoice.due_date,
-                    pdf: invoice.invoice_pdf,
-                }))
+                    period_start: invoice.period_start,
+                    period_end: invoice.period_end,
+                    invoice_pdf: invoice.invoice_pdf,
+                })),
             });
         } catch (err: any) {
             console.error("Invoice retrieval error:", err);
@@ -2002,37 +2119,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Get available plans/prices
-    app.get("/api/billing/prices", async (req: Request, res: Response) => {
-        try {
-            const prices = await stripe.prices.list({
-                active: true,
-                expand: ['data.product'],
-            });
-
-            res.json({
-                prices: prices.data.map(price => ({
-                    id: price.id,
-                    unitAmount: price.unit_amount,
-                    currency: price.currency,
-                    recurring: price.recurring,
-                    product: price.product as Stripe.Product,
-                }))
-            });
-        } catch (err: any) {
-            console.error("Price retrieval error:", err);
-            res.status(500).json({
-                message: "Failed to retrieve prices",
-                error: err.message
-            });
-        }
-    });
-
     // Create customer
     app.post("/api/billing/customer", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
-            const { email, name, phone } = req.body;
+            const userId = req.user?.userId;
+            const { email, name } = req.body;
 
             const user = await storage.getUser(userId);
             if (user?.stripeCustomerId) {
@@ -2042,18 +2133,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const customer = await stripe.customers.create({
                 email,
                 name,
-                phone,
                 metadata: {
                     userId: userId,
                 },
             });
 
-            // Update user with Stripe customer ID
             await storage.updateUserStripeCustomerId(userId, customer.id);
 
             res.json({
-                customerId: customer.id,
                 message: "Customer created successfully",
+                customer: {
+                    id: customer.id,
+                    email: customer.email,
+                    name: customer.name,
+                },
             });
         } catch (err: any) {
             console.error("Customer creation error:", err);
@@ -2064,10 +2157,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Update payment method
+    // Add payment method
     app.post("/api/billing/payment-method", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
             const { paymentMethodId } = req.body;
 
             const user = await storage.getUser(userId);
@@ -2075,23 +2168,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return res.status(404).json({ message: "No billing account found" });
             }
 
-            // Attach payment method to customer
             await stripe.paymentMethods.attach(paymentMethodId, {
                 customer: user.stripeCustomerId,
             });
 
-            // Set as default payment method
             await stripe.customers.update(user.stripeCustomerId, {
                 invoice_settings: {
                     default_payment_method: paymentMethodId,
                 },
             });
 
-            res.json({ message: "Payment method updated successfully" });
+            res.json({ message: "Payment method added successfully" });
         } catch (err: any) {
-            console.error("Payment method update error:", err);
+            console.error("Payment method addition error:", err);
             res.status(500).json({
-                message: "Failed to update payment method",
+                message: "Failed to add payment method",
                 error: err.message
             });
         }
@@ -2100,7 +2191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Get payment methods
     app.get("/api/billing/payment-methods", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const userId = req.user?.id;
+            const userId = req.user?.userId;
             const user = await storage.getUser(userId);
 
             if (!user?.stripeCustomerId) {
@@ -2115,15 +2206,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.json({
                 paymentMethods: paymentMethods.data.map(pm => ({
                     id: pm.id,
-                    brand: pm.card?.brand,
-                    last4: pm.card?.last4,
-                    expMonth: pm.card?.exp_month,
-                    expYear: pm.card?.exp_year,
-                    isDefault: pm.id === user.stripeCustomerId, // This would need to be tracked separately
-                }))
+                    type: pm.type,
+                    card: pm.card ? {
+                        brand: pm.card.brand,
+                        last4: pm.card.last4,
+                        exp_month: pm.card.exp_month,
+                        exp_year: pm.card.exp_year,
+                    } : null,
+                })),
             });
         } catch (err: any) {
-            console.error("Payment methods retrieval error:", err);
+            console.error("Payment method retrieval error:", err);
             res.status(500).json({
                 message: "Failed to retrieve payment methods",
                 error: err.message
@@ -2133,78 +2226,297 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Webhook handler for Stripe events
     app.post("/api/billing/webhook", express.raw({ type: 'application/json' }), async (req: Request, res: Response): Promise<any> => {
+        console.log('🔔 Webhook received - Headers:', Object.keys(req.headers));
+        console.log('🔔 Webhook received - Body length:', req.body?.length);
+        console.log('🔔 Webhook received - Content-Type:', req.headers['content-type']);
+        
         const sig = req.headers['stripe-signature'];
-        const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
+        const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+        console.log('Webhook secret configured:', !!endpointSecret);
+        console.log('Webhook secret starts with:', endpointSecret?.substring(0, 10) + '...');
+        console.log('🔔 Stripe signature present:', !!sig);
+        console.log('🔔 Stripe signature starts with:', (sig as string)?.substring(0, 10) + '...');
+
+        if (!endpointSecret) {
+            console.error('STRIPE_WEBHOOK_SECRET is not configured');
+            res.status(500).json({ error: 'Webhook secret not configured' });
+            return;
+        }
+
+        if (!sig) {
+            console.error('No Stripe signature found in headers');
+            res.status(400).json({ error: 'No signature found' });
+            return;
+        }
 
         let event: Stripe.Event;
 
         try {
             event = stripe.webhooks.constructEvent(req.body, sig as string, endpointSecret);
+            console.log('Webhook signature verification successful');
         } catch (err: any) {
             console.error('Webhook signature verification failed:', err.message);
+            console.error('Signature:', sig);
+            console.error('Body length:', req.body?.length);
+            console.error('Body preview:', req.body?.toString().substring(0, 200));
             res.status(400).send(`Webhook Error: ${err.message}`);
             return;
         }
 
         try {
+            console.log('🔔 Webhook received:', event.type, 'for event ID:', event.id);
+            
             switch (event.type) {
                 case 'checkout.session.completed':
                     const session = event.data.object as Stripe.Checkout.Session;
                     console.log('✅ Checkout session completed:', session.id);
+                    console.log('📝 Session metadata:', session.metadata);
+                    console.log('📝 Session subscription:', session.subscription);
+                    console.log('👤 Session customer:', session.customer);
 
                     if (session.subscription && session.customer) {
                         const userId = session.metadata?.userId;
+                        console.log('🔍 Looking for userId in metadata:', userId);
+                        
                         if (userId) {
-                            await storage.updateUserStripeCustomerId(userId, session.customer as string);
-                            await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
-                            await storage.updateUserSubscriptionStatus(userId, 'active');
+                            console.log('✅ Found userId, updating database for user:', userId);
+                            try {
+                                await storage.updateUserStripeCustomerId(userId, session.customer as string);
+                                await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
+                                await storage.updateUserSubscriptionStatus(userId, 'active');
+                                console.log('✅ Database updated successfully for user:', userId);
+                            } catch (dbError) {
+                                console.error('❌ Database update failed for user:', userId, 'Error:', dbError);
+                            }
+                        } else {
+                            console.log('❌ No userId found in session metadata');
                         }
+                    } else {
+                        console.log('❌ Session missing subscription or customer');
+                        console.log('   Subscription:', session.subscription);
+                        console.log('   Customer:', session.customer);
                     }
                     break;
 
                 case 'customer.subscription.updated':
                     const subscription = event.data.object as Stripe.Subscription;
                     console.log('📝 Subscription updated:', subscription.id);
+                    console.log('📝 Subscription metadata:', subscription.metadata);
 
                     const subUserId = subscription.metadata?.userId;
                     if (subUserId) {
-                        await storage.updateUserSubscriptionStatus(subUserId, subscription.status);
+                        console.log('✅ Updating subscription status for user:', subUserId, 'to:', subscription.status);
+                        try {
+                            await storage.updateUserSubscriptionStatus(subUserId, subscription.status);
+                        } catch (dbError) {
+                            console.error('❌ Database update failed for user:', subUserId, 'Error:', dbError);
+                        }
+                    } else {
+                        console.log('❌ No userId found in subscription metadata');
                     }
                     break;
 
                 case 'customer.subscription.deleted':
                     const deletedSubscription = event.data.object as Stripe.Subscription;
-                    console.log('Subscription deleted:', deletedSubscription.id);
+                    console.log('🗑️ Subscription deleted:', deletedSubscription.id);
+                    console.log('📝 Deleted subscription metadata:', deletedSubscription.metadata);
 
                     const deletedUserId = deletedSubscription.metadata?.userId;
                     if (deletedUserId) {
-                        await storage.updateUserSubscriptionStatus(deletedUserId, 'canceled');
+                        console.log('✅ Updating subscription status for user:', deletedUserId, 'to: canceled');
+                        try {
+                            await storage.updateUserSubscriptionStatus(deletedUserId, 'canceled');
+                        } catch (dbError) {
+                            console.error('❌ Database update failed for user:', deletedUserId, 'Error:', dbError);
+                        }
+                    } else {
+                        console.log('❌ No userId found in deleted subscription metadata');
                     }
                     break;
 
                 case 'invoice.payment_succeeded':
                     const invoice = event.data.object as Stripe.Invoice;
-                    console.log('Invoice payment succeeded:', invoice.id);
+                    console.log('💰 Invoice payment succeeded:', invoice.id);
+                    console.log('📝 Invoice metadata:', invoice.metadata);
                     break;
 
                 case 'invoice.payment_failed':
                     const failedInvoice = event.data.object as Stripe.Invoice;
-                    console.log('Invoice payment failed:', failedInvoice.id);
+                    console.log('❌ Invoice payment failed:', failedInvoice.id);
+                    console.log('📝 Failed invoice metadata:', failedInvoice.metadata);
 
                     const failedUserId = failedInvoice.metadata?.userId;
                     if (failedUserId) {
-                        await storage.updateUserSubscriptionStatus(failedUserId, 'past_due');
+                        console.log('✅ Updating subscription status for user:', failedUserId, 'to: past_due');
+                        try {
+                            await storage.updateUserSubscriptionStatus(failedUserId, 'past_due');
+                        } catch (dbError) {
+                            console.error('❌ Database update failed for user:', failedUserId, 'Error:', dbError);
+                        }
+                    } else {
+                        console.log('❌ No userId found in failed invoice metadata');
                     }
                     break;
 
                 default:
-                    console.log(`Unhandled event type: ${event.type}`);
+                    console.log(`ℹ️ Unhandled event type: ${event.type}`);
             }
 
             res.json({ received: true });
         } catch (err: any) {
-            console.error('Webhook handler error:', err);
+            console.error('❌ Webhook handler error:', err);
             res.status(500).json({ error: 'Webhook handler failed' });
+        }
+    });
+
+    // Manual webhook test endpoint for individual subscriptions (development/testing)
+    app.post("/api/billing/test-subscription-webhook", async (req, res) => {
+        try {
+            const { sessionId, userId } = req.body;
+
+            if (!sessionId || !userId) {
+                res.status(400).json({ message: "Session ID and User ID are required" });
+                return;
+            }
+
+            console.log('🧪 Manual subscription webhook test for session:', sessionId, 'user:', userId);
+
+            // Retrieve the checkout session from Stripe
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+            console.log('✅ Retrieved session:', session.id, 'status:', session.status);
+            console.log('📝 Session metadata:', session.metadata);
+            console.log('📝 Session subscription:', session.subscription);
+            console.log('👤 Session customer:', session.customer);
+
+            if (session.subscription && session.customer) {
+                console.log('✅ Session has subscription and customer');
+                console.log('📝 Subscription ID:', session.subscription);
+                console.log('👤 Customer ID:', session.customer);
+
+                // Check if the session metadata has the correct userId
+                if (session.metadata?.userId && session.metadata.userId === userId) {
+                    console.log('✅ Session metadata matches provided userId');
+                } else {
+                    console.log('⚠️ Session metadata userId mismatch or missing');
+                    console.log('   Expected:', userId);
+                    console.log('   Found:', session.metadata?.userId);
+                    console.log('   This might cause issues with automatic webhook processing');
+                }
+
+                // Update the user's database record
+                try {
+                    await storage.updateUserStripeCustomerId(userId, session.customer as string);
+                    await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
+                    await storage.updateUserSubscriptionStatus(userId, 'active');
+
+                    console.log('✅ Database updated successfully');
+
+                    res.json({ 
+                        message: "Subscription webhook processed manually",
+                        sessionId: session.id,
+                        subscriptionId: session.subscription,
+                        customerId: session.customer,
+                        userId: userId,
+                        status: 'active',
+                        metadataMatch: session.metadata?.userId === userId
+                    });
+                } catch (dbError) {
+                    console.error('❌ Database update failed:', dbError);
+                    res.status(500).json({ 
+                        message: "Database update failed",
+                        error: dbError instanceof Error ? dbError.message : 'Unknown error'
+                    });
+                }
+            } else {
+                console.log('❌ Session missing subscription or customer');
+                res.status(400).json({ 
+                    message: "Session does not have subscription or customer",
+                    session: {
+                        id: session.id,
+                        status: session.status,
+                        subscription: session.subscription,
+                        customer: session.customer,
+                        metadata: session.metadata
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("❌ Error in manual subscription webhook test:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to process subscription webhook", error: errorMessage });
+        }
+    });
+
+    // Test endpoint to check webhook secret configuration
+    app.get("/api/billing/test-webhook-secret", async (req, res) => {
+        const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        res.json({
+            secretConfigured: !!endpointSecret,
+            secretStartsWith: endpointSecret?.substring(0, 10) + '...',
+            secretLength: endpointSecret?.length,
+            expectedSecret: 'whsec_8cce5511dacfe3c5e98b9e65c2c0bae8def59f5ce8b4589347e67f548b65e0fd'
+        });
+    });
+
+    // Manual activation endpoint for direct subscription activation
+    app.post("/api/billing/manual-activate", async (req, res) => {
+        try {
+            const { sessionId, userId } = req.body;
+
+            if (!sessionId || !userId) {
+                res.status(400).json({ message: "Session ID and User ID are required" });
+                return;
+            }
+
+            console.log('🔧 Manual activation for session:', sessionId, 'user:', userId);
+
+            // Retrieve the checkout session from Stripe
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+            console.log('✅ Retrieved session:', session.id, 'status:', session.status);
+
+            if (session.status === 'complete' && session.subscription && session.customer) {
+                console.log('✅ Session is complete with subscription and customer');
+
+                // Update the user's database record
+                try {
+                    await storage.updateUserStripeCustomerId(userId, session.customer as string);
+                    await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
+                    await storage.updateUserSubscriptionStatus(userId, 'active');
+
+                    console.log('✅ Database updated successfully for manual activation');
+
+                    res.json({ 
+                        message: "Subscription activated manually",
+                        sessionId: session.id,
+                        subscriptionId: session.subscription,
+                        customerId: session.customer,
+                        userId: userId,
+                        status: 'active'
+                    });
+                } catch (dbError) {
+                    console.error('❌ Database update failed during manual activation:', dbError);
+                    res.status(500).json({ 
+                        message: "Database update failed",
+                        error: dbError instanceof Error ? dbError.message : 'Unknown error'
+                    });
+                }
+            } else {
+                console.log('❌ Session not complete or missing subscription/customer');
+                res.status(400).json({ 
+                    message: "Session is not complete or missing subscription/customer",
+                    session: {
+                        id: session.id,
+                        status: session.status,
+                        subscription: session.subscription,
+                        customer: session.customer
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("❌ Error in manual activation:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to activate subscription", error: errorMessage });
         }
     });
 
@@ -2377,14 +2689,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
     // Logo upload endpoint
-    app.post("/api/facility/logo", upload.single("logo"), (req, res): void => {
-        if (!req.file) {
-            res.status(400).json({ message: "No file uploaded" });
-            return;
+    app.post("/api/facility/logo", upload.single("logo"), async (req, res) => {
+        try {
+            if (!req.file) {
+                res.status(400).json({ message: "No file uploaded" });
+                return;
+            }
+
+            // Get the user ID from the request (you might need to add authentication here)
+            const userId = req.body.userId || req.headers['x-user-id'];
+            
+            if (!userId) {
+                res.status(400).json({ message: "User ID is required" });
+                return;
+            }
+
+            // Get the user's facility
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                res.status(404).json({ message: "User not linked to facility" });
+                return;
+            }
+
+            // Return the URL to the uploaded file
+            const logoUrl = `/uploads/${req.file.filename}`;
+            
+            // Update the facility with the new logo URL
+            const updatedFacility = await storage.updateFacility({
+                id: user.facilityId,
+                logoUrl: logoUrl
+            });
+
+            console.log('Logo uploaded and facility updated:', { logoUrl, facilityId: user.facilityId });
+
+            res.json({ 
+                logoUrl,
+                facility: updatedFacility,
+                message: "Logo uploaded and facility updated successfully"
+            });
+        } catch (error) {
+            console.error("Error uploading logo:", error);
+            res.status(500).json({ message: "Failed to upload logo" });
         }
-        // Return the URL to the uploaded file
-        const logoUrl = `/uploads/${req.file.filename}`;
-        res.json({ logoUrl });
     });
 
     // Get facility billing settings
@@ -2718,6 +3064,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 return res.status(404).json({ message: "User not linked to facility" });
             }
 
+            // Check invite limits before creating new invites
+            const purchases = await db
+                .select()
+                .from(facilityInvitePurchases)
+                .where(eq(facilityInvitePurchases.facilityId, user.facilityId));
+            
+            let totalPurchased = 0;
+            purchases.forEach(purchase => {
+                if (purchase.inviteCount && purchase.status === 'completed') {
+                    totalPurchased += purchase.inviteCount;
+                }
+            });
+
+            const allInvites = await db
+                .select()
+                .from(facilityInvites)
+                .where(eq(facilityInvites.facilityId, user.facilityId));
+            
+            const usedInvites = allInvites.filter(invite => invite.status === 'used').length;
+            
+            if (usedInvites >= totalPurchased && totalPurchased > 0) {
+                return res.status(403).json({ 
+                    message: "Invitation limit reached. You have used all your purchased invites.",
+                    limitReached: true,
+                    totalPurchased,
+                    usedInvites
+                });
+            }
+
             // Generate invite codes
             const invites = await storage.createFacilityInvites(user.facilityId, purchaseId, inviteCount);
 
@@ -2888,21 +3263,192 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Validate and use an invite code
-    app.post("/api/facility/use-invite", async (req, res) => {
+    // Check user's invite limits and available invites for restricting patient invitations
+    app.get("/api/facility/invite-limits", isAuthenticatedToken, async (req, res) => {
         try {
-            const { inviteCode, userEmail, userPhone, userName } = req.body;
+            const userId = req.user?.userId as string | undefined;
+            if (!userId) {
+                return res.status(401).json({ message: "Unauthorized" });
+            }
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId));
+            if (!user?.facilityId) {
+                return res.status(404).json({ message: "User not linked to facility" });
+            }
+
+            // Get all invite purchases for this facility
+            const purchases = await db
+                .select()
+                .from(facilityInvitePurchases)
+                .where(eq(facilityInvitePurchases.facilityId, user.facilityId));
+            
+            // Calculate total purchased invites
+            let totalPurchased = 0;
+            purchases.forEach(purchase => {
+                if (purchase.inviteCount && purchase.status === 'completed') {
+                    totalPurchased += purchase.inviteCount;
+                }
+            });
+
+            // Get all invites for this facility
+            const allInvites = await db
+                .select()
+                .from(facilityInvites)
+                .where(eq(facilityInvites.facilityId, user.facilityId));
+            
+            // Count used invites
+            const usedInvites = allInvites.filter(invite => invite.status === 'used').length;
+            
+            // Count available invites
+            const availableInvites = allInvites.filter(invite => invite.status === 'unused').length;
+
+            res.json({
+                totalPurchased,
+                usedInvites,
+                availableInvites,
+                canInvite: availableInvites > 0,
+                limitReached: usedInvites >= totalPurchased && totalPurchased > 0,
+                hasAnyPurchases: totalPurchased > 0,
+                remainingInvites: Math.max(0, totalPurchased - usedInvites)
+            });
+
+        } catch (error) {
+            console.error("Error checking invite limits:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to check invite limits", error: errorMessage });
+        }
+    });
+
+    // Validate invite code (for signup process)
+    app.post("/api/facility/validate-invite", async (req, res) => {
+        try {
+            const { inviteCode } = req.body;
 
             if (!inviteCode) {
                 res.status(400).json({ message: "Invite code is required" });
                 return;
             }
 
-            const facilities = await storage.getAllFacilities();
-            const facility = facilities[0]; // For now, get the first facility
+            console.log('Validating invite code:', inviteCode);
+
+            // Find the invite
+            const [invite] = await db.select().from(facilityInvites).where(eq(facilityInvites.inviteCode, inviteCode));
+            
+            if (!invite) {
+                return res.status(400).json({ 
+                    valid: false, 
+                    message: "Invalid invite code" 
+                });
+            }
+
+            if (invite.status !== 'unused') {
+                return res.status(400).json({ 
+                    valid: false, 
+                    message: "Invite code has already been used" 
+                });
+            }
+
+            if (invite.expiresAt && new Date() > invite.expiresAt) {
+                return res.status(400).json({ 
+                    valid: false, 
+                    message: "Invite code has expired" 
+                });
+            }
+
+            // Get the facility
+            const [facility] = await db.select().from(facilities).where(eq(facilities.id, invite.facilityId));
+            if (!facility) {
+                return res.status(400).json({ 
+                    valid: false, 
+                    message: "Facility not found" 
+                });
+            }
+
+            console.log('Invite code is valid for facility:', facility.id);
+
+            res.json({
+                valid: true,
+                message: "Invite code is valid",
+                facility: {
+                    id: facility.id,
+                    name: facility.name,
+                    tagline: facility.tagline
+                },
+                invite: {
+                    id: invite.id,
+                    expiresAt: invite.expiresAt
+                }
+            });
+        } catch (error) {
+            console.error("Error validating invite:", error);
+            res.status(500).json({ 
+                valid: false, 
+                message: "Failed to validate invite" 
+            });
+        }
+    });
+
+    // Validate and use an invite code
+    app.post("/api/facility/use-invite", async (req, res) => {
+        try {
+            const { inviteCode, userEmail, userPhone, userName, userId } = req.body;
+
+            if (!inviteCode) {
+                res.status(400).json({ message: "Invite code is required" });
+                return;
+            }
+
+            let facility;
+            
+            // If userId is provided, get the facility linked to that user
+            if (userId) {
+                const [user] = await db.select().from(users).where(eq(users.id, userId));
+                if (user?.facilityId) {
+                    const [userFacility] = await db.select().from(facilities).where(eq(facilities.id, user.facilityId));
+                    facility = userFacility;
+                }
+            }
+            
+            // If no facility found from user, fall back to first facility (for backward compatibility)
+            if (!facility) {
+                const facilities = await storage.getAllFacilities();
+                facility = facilities[0];
+            }
+            
             if (!facility) {
                 res.status(404).json({ message: "Facility not found" });
                 return;
+            }
+
+            console.log('Using invite for facility:', facility.id, 'with user info:', { userEmail, userPhone, userName, userId });
+
+            // Check if facility has reached invite limit
+            const purchases = await db
+                .select()
+                .from(facilityInvitePurchases)
+                .where(eq(facilityInvitePurchases.facilityId, facility.id));
+            
+            let totalPurchased = 0;
+            purchases.forEach(purchase => {
+                if (purchase.inviteCount && purchase.status === 'completed') {
+                    totalPurchased += purchase.inviteCount;
+                }
+            });
+
+            const allInvites = await db
+                .select()
+                .from(facilityInvites)
+                .where(eq(facilityInvitePurchases.facilityId, facility.id));
+            
+            const usedInvites = allInvites.filter(invite => invite.status === 'used').length;
+            
+            if (usedInvites >= totalPurchased && totalPurchased > 0) {
+                return res.status(403).json({ 
+                    message: "Invitation limit reached. This facility has used all their purchased invites.",
+                    limitReached: true,
+                    totalPurchased,
+                    usedInvites
+                });
             }
 
             // Validate and use the invite
@@ -2917,7 +3463,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     message: "Invite used successfully",
                     facility: result.facility,
                     user: result.user,
-                    // patient: result?.patient
                 });
             } else {
                 res.status(400).json({ message: result.message });
