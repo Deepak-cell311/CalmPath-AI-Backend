@@ -13,7 +13,7 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import z from "zod";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import Stripe from "stripe";
 
 // memeory track route.ts
@@ -777,6 +777,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (error) {
             console.error("Error fetching patients:", error);
             res.status(500).json({ message: "Failed to fetch patients" });
+        }
+    });
+
+    // Get facility members (patients + invited family members)
+    app.get("/api/facility/members", async (req, res) => {
+        try {
+            const { facilityId } = req.query;
+
+            if (!facilityId || typeof facilityId !== 'string') {
+                res.status(400).json({ message: "Facility ID is required" });
+                return;
+            }
+
+            // Get patients from the patients table
+            const facilityPatients = await db
+                .select()
+                .from(patients)
+                .where(eq(patients.facilityId, facilityId));
+
+            // Get family members from the users table who used invite codes for this facility
+            const invitedFamilyMembers = await db
+                .select()
+                .from(users)
+                .where(
+                    and(
+                        eq(users.facilityId, facilityId),
+                        eq(users.usedInviteCode, true),
+                        eq(users.accountType, 'Family Member')
+                    )
+                );
+
+            // Combine and format the results
+            const facilityMembers = [
+                // Patients
+                ...facilityPatients.map((patient: any) => ({
+                    ...patient,
+                    type: 'patient',
+                    displayName: `${patient.firstName} ${patient.lastName}`,
+                    status: patient.status || 'active'
+                })),
+                // Invited family members
+                ...invitedFamilyMembers.map((user: any) => ({
+                    id: user.id,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    email: user.email,
+                    phoneNumber: user.phoneNumber,
+                    type: 'family_member',
+                    displayName: `${user.firstName} ${user.lastName}`,
+                    status: 'active',
+                    usedInviteCode: user.usedInviteCode,
+                    subscriptionStatus: user.subscriptionStatus
+                }))
+            ];
+
+            res.json(facilityMembers);
+        } catch (error) {
+            console.error("Error fetching facility members:", error);
+            res.status(500).json({ message: "Failed to fetch facility members" });
         }
     });
 
@@ -3628,6 +3687,466 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     // ==================== Patient Management ====================== //
+
+    // ==================== Billing Success/Cancel Pages ====================== //
+
+    // Success page for family member payments
+    app.get("/billing/success", async (req: Request, res: Response): Promise<any> => {
+        try {
+            const { session_id } = req.query;
+            
+            if (!session_id) {
+                return res.status(400).json({ message: "Session ID is required" });
+            }
+
+            // Retrieve the checkout session to get payment details
+            const session = await stripe.checkout.sessions.retrieve(session_id as string);
+            
+            if (!session) {
+                return res.status(404).json({ message: "Session not found" });
+            }
+
+            // Get customer details
+            let customer: Stripe.Customer | null = null;
+            if (session.customer) {
+                const customerResponse = await stripe.customers.retrieve(session.customer as string);
+                if (customerResponse && !customerResponse.deleted) {
+                    customer = customerResponse;
+                }
+            }
+
+            // Get subscription details if it's a subscription
+            let subscription = null;
+            if (session.subscription) {
+                subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+            }
+
+            // Send HTML response for success page
+            const successHtml = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Successful - CalmPath AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: #10b981;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            color: white;
+            font-size: 40px;
+        }
+        
+        h1 {
+            color: #1f2937;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        
+        .message {
+            color: #6b7280;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .details {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .detail-row:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        
+        .detail-label {
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        .detail-value {
+            color: #6b7280;
+        }
+        
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .btn-secondary:hover {
+            background: #e5e7eb;
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            .buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success-icon">✓</div>
+        <h1>Payment Successful!</h1>
+        <p class="message">
+            Thank you for your payment. Your family member's subscription has been activated successfully.
+            You will receive a confirmation email shortly.
+        </p>
+        
+        <div class="details">
+            <div class="detail-row">
+                <span class="detail-label">Session ID:</span>
+                <span class="detail-value">${session.id}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Amount:</span>
+                <span class="detail-value">$${(session.amount_total! / 100).toFixed(2)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Status:</span>
+                <span class="detail-value">${session.payment_status}</span>
+            </div>
+            ${customer ? `
+            <div class="detail-row">
+                <span class="detail-label">Customer:</span>
+                <span class="detail-value">${customer.email || 'N/A'}</span>
+            </div>
+            ` : ''}
+            ${subscription ? `
+            <div class="detail-row">
+                <span class="detail-label">Subscription:</span>
+                <span class="detail-value">${subscription.status}</span>
+            </div>
+            ` : ''}
+        </div>
+        
+        <div class="buttons">
+            <a href="/family-dashboard" class="btn btn-primary">Go to Dashboard</a>
+            <a href="/" class="btn btn-secondary">Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>`;
+
+            res.setHeader('Content-Type', 'text/html');
+            res.send(successHtml);
+        } catch (err: any) {
+            console.error("Success page error:", err);
+            res.status(500).json({
+                message: "Failed to load success page",
+                error: err.message
+            });
+        }
+    });
+
+    // JSON API endpoint for payment details (for frontend use)
+    app.get("/api/billing/payment-details", async (req: Request, res: Response): Promise<any> => {
+        try {
+            const { session_id } = req.query;
+            
+            if (!session_id) {
+                return res.status(400).json({ error: "Session ID is required" });
+            }
+
+            // Retrieve the checkout session to get payment details
+            const session = await stripe.checkout.sessions.retrieve(session_id as string);
+            
+            if (!session) {
+                return res.status(404).json({ error: "Session not found" });
+            }
+
+            // Get customer details
+            let customer: Stripe.Customer | null = null;
+            if (session.customer) {
+                const customerResponse = await stripe.customers.retrieve(session.customer as string);
+                if (customerResponse && !customerResponse.deleted) {
+                    customer = customerResponse;
+                }
+            }
+
+            // Get subscription details if it's a subscription
+            let subscription = null;
+            if (session.subscription) {
+                subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+            }
+
+            // Format the response
+            const paymentDetails = {
+                sessionId: session.id,
+                amount: session.amount_total ? `$${(session.amount_total / 100).toFixed(2)}` : 'N/A',
+                status: session.payment_status || 'unknown',
+                customerEmail: customer?.email || null,
+                subscriptionStatus: subscription?.status || null,
+                currency: session.currency?.toUpperCase() || 'USD',
+                createdAt: session.created,
+                metadata: session.metadata || {},
+            };
+
+            res.json(paymentDetails);
+        } catch (err: any) {
+            console.error("Payment details API error:", err);
+            res.status(500).json({
+                error: "Failed to fetch payment details",
+                message: err.message
+            });
+        }
+    });
+
+    // Cancel page for family member payments
+    app.get("/billing/cancel", async (req: Request, res: Response): Promise<any> => {
+        try {
+            // Send HTML response for cancel page
+            const cancelHtml = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Cancelled - CalmPath AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        .cancel-icon {
+            width: 80px;
+            height: 80px;
+            background: #ef4444;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            color: white;
+            font-size: 40px;
+        }
+        
+        h1 {
+            color: #1f2937;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        
+        .message {
+            color: #6b7280;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .info-box {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .info-title {
+            color: #dc2626;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        
+        .info-text {
+            color: #6b7280;
+            line-height: 1.6;
+        }
+        
+        .buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #f093fb;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #e879f9;
+            transform: translateY(-2px);
+        }
+        
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .btn-secondary:hover {
+            background: #e5e7eb;
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            .buttons {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="cancel-icon">✕</div>
+        <h1>Payment Cancelled</h1>
+        <p class="message">
+            Your payment was cancelled. No charges have been made to your account.
+            You can try again anytime or contact our support team for assistance.
+        </p>
+        
+        <div class="info-box">
+            <div class="info-title">What happened?</div>
+            <div class="info-text">
+                The payment process was interrupted or cancelled. This could be due to:
+                <ul style="text-align: left; margin-top: 10px; padding-left: 20px;">
+                    <li>You closed the payment window</li>
+                    <li>Network connectivity issues</li>
+                    <li>Payment method was declined</li>
+                    <li>You decided to cancel the transaction</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="buttons">
+            <a href="/family-dashboard" class="btn btn-primary">Try Again</a>
+            <a href="/" class="btn btn-secondary">Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>`;
+
+            res.setHeader('Content-Type', 'text/html');
+            res.send(cancelHtml);
+        } catch (err: any) {
+            console.error("Cancel page error:", err);
+            res.status(500).json({
+                message: "Failed to load cancel page",
+                error: err.message
+            });
+        }
+    });
 
     const httpServer = createServer(app);
     return httpServer;
