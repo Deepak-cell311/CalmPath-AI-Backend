@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "nodemon --watch server --ext ts --exec ts-node server/index.ts",
     "build": "tsc",
-    "postbuild": "mkdir dist\\server\\uploads",
+    "postbuild": "node scripts/setup-uploads.js",
     "setup-uploads": "node scripts/setup-uploads.js",
     "debug-uploads": "node scripts/debug-uploads.js",
     "start": "node dist/server/index.js",
