@@ -60,6 +60,13 @@ const upload = multer({
     storage: multer.diskStorage({
         destination: (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
             const uploadPath = path.join(__dirname, 'uploads');
+            
+            // Ensure uploads directory exists
+            const fs = require('fs');
+            if (!fs.existsSync(uploadPath)) {
+                fs.mkdirSync(uploadPath, { recursive: true });
+            }
+            
             cb(null, uploadPath);
         },
         filename: (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
@@ -1114,6 +1121,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!req.file) {
                 return res.status(400).json({ message: "No photo uploaded" });
             }
+
+            console.log("File uploaded successfully:", req.file.filename, "to", req.file.path);
 
             const photoUrl = `/uploads/${req.file.filename}`;
 

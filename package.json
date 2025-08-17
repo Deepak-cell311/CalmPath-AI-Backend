@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "nodemon --watch server --ext ts --exec ts-node server/index.ts",
     "build": "tsc",
+    "postbuild": "mkdir dist\\server\\uploads",
+    "setup-uploads": "node scripts/setup-uploads.js",
     "start": "node dist/server/index.js",
     "db:generate": "drizzle-kit generate:pg",
     "db:push": "drizzle-kit push:pg",

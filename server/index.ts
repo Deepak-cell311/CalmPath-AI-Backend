@@ -8,6 +8,8 @@ import { setupVite, serveStatic, log } from "./vite";
 import { registerVoiceRoutes } from "./voice";
 import webhookHandler from "./webhook";
 import stripeRoutes from "./stripe";
+import path from "path";
+import fs from "fs";
 
 const app = express();
 
@@ -86,6 +88,13 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Ensure uploads directory exists
+  const uploadsPath = path.join(__dirname, 'uploads');
+  if (!fs.existsSync(uploadsPath)) {
+    fs.mkdirSync(uploadsPath, { recursive: true });
+    log(`Created uploads directory: ${uploadsPath}`);
+  }
+
   const server = await registerRoutes(app);
   registerVoiceRoutes(app);
 
