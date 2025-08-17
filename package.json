@@ -8,6 +8,8 @@
     "postbuild": "node scripts/setup-uploads.js",
     "setup-uploads": "node scripts/setup-uploads.js",
     "debug-uploads": "node scripts/debug-uploads.js",
+    "test-protocol": "node scripts/test-protocol.js",
+    "test-real-protocol": "node scripts/test-real-protocol.js",
     "start": "node dist/server/index.js",
     "db:generate": "drizzle-kit generate:pg",
     "db:push": "drizzle-kit push:pg",

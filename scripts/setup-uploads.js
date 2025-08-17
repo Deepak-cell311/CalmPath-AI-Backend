@@ -19,3 +19,4 @@ try {
   console.error("Error setting up uploads directory:", error);
   process.exit(1);
 }
+

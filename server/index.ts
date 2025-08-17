@@ -13,6 +13,11 @@ import fs from "fs";
 
 const app = express();
 
+// Trust proxy for correct protocol detection in production
+// This tells Express to trust the X-Forwarded-* headers from the proxy
+app.set('trust proxy', 1);
+app.enable('trust proxy');
+
 // --- CORS: Allow credentials and set correct origin for production ---
 const allowedOrigins = [
   "https://app.calmpath.ai",

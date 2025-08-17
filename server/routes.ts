@@ -40,6 +40,51 @@ import { randomUUID } from "crypto";
 import { db } from "./db";
 import cors from "cors";
 
+// Helper function to determine the correct protocol
+function getProtocol(req: Request): string {
+    console.log('=== Protocol Detection Debug ===');
+    console.log('req.protocol:', req.protocol);
+    console.log('req.secure:', req.secure);
+    console.log('req.headers[x-forwarded-proto]:', req.headers['x-forwarded-proto']);
+    console.log('req.headers[x-forwarded-ssl]:', req.headers['x-forwarded-ssl']);
+    console.log('req.headers[x-forwarded-for]:', req.headers['x-forwarded-for']);
+    console.log('req.headers[host]:', req.headers['host']);
+    console.log('req.headers[origin]:', req.headers['origin']);
+    console.log('req.headers[referer]:', req.headers['referer']);
+    console.log('All headers:', JSON.stringify(req.headers, null, 2));
+    
+    let protocol = req.protocol;
+    
+    if (req.headers['x-forwarded-proto']) {
+        protocol = req.headers['x-forwarded-proto'] as string;
+        console.log('Using X-Forwarded-Proto:', protocol);
+    } else if (req.headers['x-forwarded-ssl'] === 'on') {
+        protocol = 'https';
+        console.log('Using X-Forwarded-SSL, setting protocol to https');
+    } else if (req.secure) {
+        protocol = 'https';
+        console.log('Using req.secure, setting protocol to https');
+    } else {
+        console.log('Using default req.protocol:', protocol);
+    }
+    
+    console.log('Final protocol determined:', protocol);
+    
+    // Fallback: If the request comes from an HTTPS origin, force HTTPS
+    if (req.headers['origin'] && req.headers['origin'].startsWith('https://')) {
+        console.log('Origin is HTTPS, forcing protocol to https');
+        protocol = 'https';
+    } else if (req.headers['referer'] && req.headers['referer'].startsWith('https://')) {
+        console.log('Referer is HTTPS, forcing protocol to https');
+        protocol = 'https';
+    }
+    
+    console.log('Final protocol after fallback:', protocol);
+    console.log('=== End Protocol Detection Debug ===');
+    
+    return protocol;
+}
+
 declare module 'express-session' {
     interface SessionData {
         user?: any; // Allow flexible user object for now
@@ -90,6 +135,13 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+
+    // Add request logging middleware for debugging
+    app.use((req, res, next) => {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+        console.log('Headers:', JSON.stringify(req.headers, null, 2));
+        next();
+    });
 
     //  Test CORS
     const allowedOrigins = [
@@ -740,6 +792,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log('Setting up static file serving for uploads at:', uploadsPath);
     app.use('/uploads', express.static(uploadsPath));
     
+    // Create a test file to verify static serving works
+    const fs = require('fs');
+    const testFilePath = path.join(uploadsPath, 'test.txt');
+    if (!fs.existsSync(testFilePath)) {
+        fs.writeFileSync(testFilePath, 'Static file serving test - ' + new Date().toISOString());
+        console.log('Created test file for static serving:', testFilePath);
+    }
+    
     // Test endpoint to verify uploads directory
     app.get('/api/test-uploads', (req, res) => {
         const fs = require('fs');
@@ -756,6 +816,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 error: error.message, 
                 uploadsPath,
                 exists: fs.existsSync(uploadsPath)
+            });
+        }
+    });
+
+    // Test endpoint to check static file serving
+    app.get('/api/test-static/:filename', (req, res) => {
+        const fs = require('fs');
+        const filename = req.params.filename;
+        const filePath = path.join(uploadsPath, filename);
+        
+        try {
+            if (fs.existsSync(filePath)) {
+                const stats = fs.statSync(filePath);
+                res.json({
+                    filename,
+                    filePath,
+                    exists: true,
+                    size: stats.size,
+                    isFile: stats.isFile(),
+                    permissions: stats.mode.toString(8)
+                });
+            } else {
+                res.json({
+                    filename,
+                    filePath,
+                    exists: false,
+                    uploadsPath,
+                    uploadsExists: fs.existsSync(uploadsPath),
+                    uploadsFiles: fs.existsSync(uploadsPath) ? fs.readdirSync(uploadsPath) : []
+                });
+            }
+        } catch (error: any) {
+            res.status(500).json({
+                error: error.message,
+                filename,
+                filePath,
+                uploadsPath
             });
         }
     });
@@ -1149,6 +1246,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
             const photoUrl = `/uploads/${req.file.filename}`;
 
+            // Determine the correct protocol for production
+            const protocol = getProtocol(req);
+            
+            console.log("Request protocol:", req.protocol);
+            console.log("X-Forwarded-Proto:", req.headers['x-forwarded-proto']);
+            console.log("X-Forwarded-SSL:", req.headers['x-forwarded-ssl']);
+            console.log("Request secure:", req.secure);
+            console.log("Final protocol:", protocol);
+            console.log("Request host:", req.get("host"));
+            console.log("Request headers:", req.headers);
+            console.log("Full URL being constructed:", `${protocol}://${req.get("host")}${photoUrl}`);
+
             const schema = z.object({
                 file: z.string().url(),
                 photoname: z.string().optional(),
@@ -1158,7 +1267,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
 
             const validatedData = schema.parse({
-                file: `${req.protocol}://${req.get("host")}${photoUrl}`,
+                file: `${protocol}://${req.get("host")}${photoUrl}`,
                 photoname: req.body.photoname,
                 description: req.body.description,
                 tags: req.body.tags ? JSON.parse(req.body.tags) : [],
