@@ -7,6 +7,7 @@
     "build": "tsc",
     "postbuild": "mkdir dist\\server\\uploads",
     "setup-uploads": "node scripts/setup-uploads.js",
+    "debug-uploads": "node scripts/debug-uploads.js",
     "start": "node dist/server/index.js",
     "db:generate": "drizzle-kit generate:pg",
     "db:push": "drizzle-kit push:pg",

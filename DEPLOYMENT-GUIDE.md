@@ -59,25 +59,52 @@ After deployment, verify that:
 ### 4. Troubleshooting
 
 #### If uploads still fail:
-1. Check directory permissions:
+1. **Run the debug script:**
+   ```bash
+   cd CommonServer
+   npm run debug-uploads
+   ```
+
+2. **Test the uploads endpoint:**
+   ```bash
+   curl https://app.calmpath.ai/api/test-uploads
+   ```
+
+3. **Check directory permissions:**
    ```bash
    ls -la /root/CalmPath-AI-Backend/dist/server/
    ```
 
-2. Check if the directory exists:
+4. **Check if the directory exists:**
    ```bash
    ls -la /root/CalmPath-AI-Backend/dist/server/uploads/
    ```
 
-3. Create manually if needed:
+5. **Create manually if needed:**
    ```bash
    mkdir -p /root/CalmPath-AI-Backend/dist/server/uploads
    chmod 755 /root/CalmPath-AI-Backend/dist/server/uploads
    ```
 
-4. Restart the application:
+6. **Restart the application:**
    ```bash
    pm2 restart calmpath-backend
+   ```
+
+#### For delete operations:
+1. **Check PM2 logs for detailed error information:**
+   ```bash
+   pm2 logs calmpath-backend --lines 50
+   ```
+
+2. **Test delete endpoint manually:**
+   ```bash
+   curl -X DELETE https://app.calmpath.ai/api/family/memoryPhotos/1755421861207
+   ```
+
+3. **Verify file exists before deletion:**
+   ```bash
+   ls -la /root/CalmPath-AI-Backend/dist/server/uploads/1755421861207-nail.jpg
    ```
 
 #### Check PM2 logs:

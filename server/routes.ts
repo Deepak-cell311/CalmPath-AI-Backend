@@ -735,7 +735,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    app.use('/uploads', express.static(path.join(__dirname, 'uploads')));  // Serve static files from the uploads directory
+    // Serve static files from the uploads directory
+    const uploadsPath = path.join(__dirname, 'uploads');
+    console.log('Setting up static file serving for uploads at:', uploadsPath);
+    app.use('/uploads', express.static(uploadsPath));
+    
+    // Test endpoint to verify uploads directory
+    app.get('/api/test-uploads', (req, res) => {
+        const fs = require('fs');
+        try {
+            const files = fs.readdirSync(uploadsPath);
+            res.json({ 
+                uploadsPath, 
+                files, 
+                exists: fs.existsSync(uploadsPath),
+                stats: fs.statSync(uploadsPath)
+            });
+        } catch (error: any) {
+            res.status(500).json({ 
+                error: error.message, 
+                uploadsPath,
+                exists: fs.existsSync(uploadsPath)
+            });
+        }
+    });
 
     setupAuth(app);
 
@@ -1191,29 +1214,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.delete("/api/family/memoryPhotos/:id", async (req: Request, res: Response): Promise<any> => {
         try {
             const id = parseInt(req.params.id);
-            if (!id) {
-                return res.status(400).json({ message: "No id provided" });
+            console.log('Attempting to delete photo with ID:', id);
+            
+            if (!id || isNaN(id)) {
+                return res.status(400).json({ message: "Invalid id provided" });
             }
+            
             // Find the photo to get the file path
-            const photo = await db.query.memoryPhotos.findFirst({ where: (photo, { eq }) => eq(photo.id, id) });
+            const photo = await db.query.memoryPhotos.findFirst({ 
+                where: (photo, { eq }) => eq(photo.id, id) 
+            });
+            
+            console.log('Found photo:', photo);
+            
             if (!photo) {
                 return res.status(404).json({ message: "Photo not found" });
             }
-            // Delete from DB
+            
+            // Delete from DB first
             await db.delete(memoryPhotos).where(eq(memoryPhotos.id, id));
+            console.log('Photo deleted from database');
+            
             // Delete file from disk
             if (photo.file) {
                 const fs = require('fs');
                 const path = require('path');
-                const filePath = path.join(__dirname, '../uploads', path.basename(photo.file));
+                
+                // Extract filename from the full URL
+                const urlParts = photo.file.split('/');
+                const filename = urlParts[urlParts.length - 1];
+                const filePath = path.join(__dirname, 'uploads', filename);
+                
+                console.log('Attempting to delete file:', filePath);
+                console.log('File URL from DB:', photo.file);
+                console.log('Extracted filename:', filename);
+                
                 if (fs.existsSync(filePath)) {
                     fs.unlinkSync(filePath);
+                    console.log('File deleted successfully:', filePath);
+                } else {
+                    console.log('File not found for deletion:', filePath);
+                    // Try alternative path
+                    const altPath = path.join(__dirname, 'uploads', path.basename(photo.file));
+                    if (fs.existsSync(altPath)) {
+                        fs.unlinkSync(altPath);
+                        console.log('File deleted from alternative path:', altPath);
+                    } else {
+                        console.log('File not found in alternative path either:', altPath);
+                    }
                 }
             }
-            return res.status(200).json({ message: "Photo deleted" });
+            
+            return res.status(200).json({ message: "Photo deleted successfully" });
         } catch (error: any) {
             console.error("Error deleting memory photo:", error);
-            return res.status(500).json({ message: "Failed to delete memory photo", error: error.message });
+            return res.status(500).json({ 
+                message: "Failed to delete memory photo", 
+                error: error.message,
+                stack: error.stack 
+            });
         }
     });
 
