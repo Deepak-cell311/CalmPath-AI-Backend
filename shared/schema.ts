@@ -19,7 +19,8 @@ export const sessions = pgTable("sessions", {
 
 export const memoryPhotos = pgTable("memory_photos", {
   id: serial("id").primaryKey(),
-//   uploadedBy: varchar("uploaded_by", { length: 255 }).notNull(),
+  // Owner of the uploaded photo (family member user ID)
+  uploadedBy: varchar("uploaded_by", { length: 255 }).references(() => users.id),
   photoname: varchar("photoname", { length: 255 }).notNull(),
   description: text("description"),
   contextAndStory: text("context_and_story"),

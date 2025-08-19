@@ -787,10 +787,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Serve static files from the uploads directory
+    // Secure serving for uploads directory (no public static serving)
     const uploadsPath = path.join(__dirname, 'uploads');
-    console.log('Setting up static file serving for uploads at:', uploadsPath);
-    app.use('/uploads', express.static(uploadsPath));
+    console.log('Setting up SECURE file serving for uploads at:', uploadsPath);
+    app.get('/uploads/:filename', async (req: Request, res: Response) => {
+        try {
+            const filename = req.params.filename;
+            const authHeader = (req.headers.authorization || '') as string;
+            const tokenFromHeader = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
+            let tokenFromQuery: string | undefined;
+            if (Array.isArray(req.query.t)) {
+                const arr = req.query.t as unknown as string[];
+                tokenFromQuery = arr[arr.length - 1];
+            } else if (typeof req.query.t === 'string') {
+                tokenFromQuery = req.query.t as string;
+            }
+            const token = tokenFromHeader || tokenFromQuery;
+            if (!token) {
+                return res.status(401).json({ message: 'Unauthorized' });
+            }
+
+            // Decode base64 JSON token to get userId (same format as isAuthenticatedToken)
+            let userId: string | undefined;
+            try {
+                const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+                userId = decoded.userId;
+            } catch (e) {
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+            if (!userId) {
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+
+            // Verify ownership: file must belong to current user in memory_photos
+            const userPhotos = await db.select().from(memoryPhotos).where(eq(memoryPhotos.uploadedBy, userId));
+            const isOwner = userPhotos.some(p => typeof p.file === 'string' && p.file.endsWith(`/${filename}`));
+            if (!isOwner) {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+
+            const filePath = path.join(uploadsPath, filename);
+            return res.sendFile(filePath);
+        } catch (error: any) {
+            console.error('Error serving upload:', error);
+            return res.status(500).json({ message: 'Failed to serve file' });
+        }
+    });
     
     // Create a test file to verify static serving works
     const fs = require('fs');
@@ -1234,9 +1276,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
 
-    app.post("/api/family/memoryPhotos", upload.single("photo"), async (req: Request, res: Response): Promise<any> => {
+    app.post("/api/family/memoryPhotos", isAuthenticatedToken, upload.single("photo"), async (req: Request, res: Response): Promise<any> => {
         try {
-            const uploadedBy = req.user?.claims?.sub;
+            const uploadedBy = req.user?.userId as string | undefined;
 
             if (!req.file) {
                 return res.status(400).json({ message: "No photo uploaded" });
@@ -1274,9 +1316,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 contextAndStory: req.body.contextAndStory,
             });
 
-            // TODO: Save `validatedData` to DB here
+            // Save validated data to DB scoped to uploader
             await db.insert(memoryPhotos).values({
-                // uploadedBy,
+                uploadedBy,
                 photoname: validatedData.photoname || "",
                 description: validatedData.description || "",
                 contextAndStory: validatedData.contextAndStory || "",
@@ -1292,15 +1334,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     );
 
-    app.get("/api/family/memoryPhotos", async (req: Request, res: Response): Promise<any> => {
+    app.get("/api/family/memoryPhotos", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
-            const uploadedBy = req.user?.claims?.sub;
+            const uploadedBy = req.user?.userId as string | undefined;
+            if (!uploadedBy) {
+                return res.status(401).json({ message: "Unauthorized" });
+            }
 
             // Query memory photos by uploader
             const photos = await db
                 .select()
                 .from(memoryPhotos)
-            // .where(memoryPhotos.uploadedBy, "=", uploadedBy);
+                .where(eq(memoryPhotos.uploadedBy, uploadedBy));
 
             // Format and return
             const formatted = photos.map((photo) => ({
@@ -1320,8 +1365,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    app.delete("/api/family/memoryPhotos/:id", async (req: Request, res: Response): Promise<any> => {
+    app.delete("/api/family/memoryPhotos/:id", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
+            const currentUserId = req.user?.userId as string | undefined;
             const id = parseInt(req.params.id);
             console.log('Attempting to delete photo with ID:', id);
             
@@ -1338,6 +1384,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             if (!photo) {
                 return res.status(404).json({ message: "Photo not found" });
+            }
+            // Enforce ownership
+            if (!currentUserId || photo.uploadedBy !== currentUserId) {
+                return res.status(403).json({ message: "Forbidden" });
             }
             
             // Delete from DB first
