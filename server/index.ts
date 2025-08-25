@@ -22,7 +22,8 @@ app.enable('trust proxy');
 const allowedOrigins = [
   "https://app.calmpath.ai",
   "https://calm-path-ai.vercel.app",
-  "http://localhost:3000"
+  "http://localhost:3000",
+  "https://calmpathfrontend-sid-production.up.railway.app"
 ];
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback: any) {
