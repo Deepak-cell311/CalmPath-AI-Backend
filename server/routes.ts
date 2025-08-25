@@ -1375,7 +1375,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.log("Final protocol:", protocol);
             console.log("Request host:", req.get("host"));
             console.log("Request headers:", req.headers);
-            console.log("Full URL being constructed:", `${protocol}://${req.get("host")}${photoUrl}`);
+            
+            // Use environment variable for base URL if available, otherwise fall back to request host
+            const baseUrl = process.env.BACKEND_BASE_URL || `${protocol}://${req.get("host")}`;
+            console.log("Using baseUrl:", baseUrl);
+            console.log("Full URL being constructed:", `${baseUrl}${photoUrl}`);
 
             const schema = z.object({
                 file: z.string().url(),
@@ -1384,9 +1388,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 tags: z.array(z.string()).optional(),
                 contextAndStory: z.string().optional(),
             });
-
+            
             const validatedData = schema.parse({
-                file: `${protocol}://${req.get("host")}${photoUrl}`,
+                file: `${baseUrl}${photoUrl}`,
                 photoname: req.body.photoname,
                 description: req.body.description,
                 tags: req.body.tags ? JSON.parse(req.body.tags) : [],
