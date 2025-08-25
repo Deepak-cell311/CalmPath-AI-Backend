@@ -33,7 +33,9 @@ import {
     insertMedicationSchema,
     facilityInvitePurchases,
     facilityInvitePackages,
-    facilityInvites
+    facilityInvites,
+    personalInfo,
+    insertPersonalInfoSchema
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
@@ -287,6 +289,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.get("/api/health", (req, res) => {
         res.json({ status: "ok" });
+    });
+
+    // Debug endpoint to check users in database
+    app.get("/api/debug/users", async (req, res) => {
+        try {
+            const allUsers = await db.select({
+                id: users.id,
+                email: users.email,
+                firstName: users.firstName,
+                lastName: users.lastName,
+                accountType: users.accountType,
+                createdAt: users.createdAt
+            }).from(users);
+            
+            res.json({
+                userCount: allUsers.length,
+                users: allUsers
+            });
+        } catch (error) {
+            console.error("Error fetching users:", error);
+            res.status(500).json({ error: "Failed to fetch users" });
+        }
+    });
+
+    // Debug endpoint to check a specific user by ID
+    app.get("/api/debug/user/:userId", async (req, res) => {
+        try {
+            const userId = req.params.userId;
+            console.log("Debug user endpoint - checking userId:", userId);
+            
+            const user = await db.select({
+                id: users.id,
+                email: users.email,
+                firstName: users.firstName,
+                lastName: users.lastName,
+                accountType: users.accountType,
+                createdAt: users.createdAt
+            }).from(users).where(eq(users.id, userId)).limit(1);
+            
+            if (user.length === 0) {
+                res.json({
+                    found: false,
+                    userId: userId,
+                    message: "User not found in database"
+                });
+            } else {
+                res.json({
+                    found: true,
+                    user: user[0]
+                });
+            }
+        } catch (error) {
+            console.error("Error fetching specific user:", error);
+            res.status(500).json({ error: "Failed to fetch user" });
+        }
     });
 
     // Debug session status
@@ -1278,7 +1335,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post("/api/family/memoryPhotos", isAuthenticatedToken, upload.single("photo"), async (req: Request, res: Response): Promise<any> => {
         try {
+            console.log("Memory photos upload - req.user:", req.user);
+            console.log("Memory photos upload - req.user?.userId:", req.user?.userId);
+            console.log("Memory photos upload - req.headers.authorization:", req.headers.authorization ? req.headers.authorization.substring(0, 50) + "..." : "none");
+            
             const uploadedBy = req.user?.userId as string | undefined;
+
+            if (!uploadedBy) {
+                console.error("Memory photos upload - No user ID found in token");
+                return res.status(401).json({ message: "No user ID found in token" });
+            }
+
+            console.log("Memory photos upload - Extracted uploadedBy:", uploadedBy);
+
+            // Verify user exists in database before proceeding
+            const user = await db.select().from(users).where(eq(users.id, uploadedBy)).limit(1);
+            console.log("Memory photos upload - Database query result:", user);
+            if (user.length === 0) {
+                console.error("User not found in database:", uploadedBy);
+                return res.status(401).json({ message: "User not found in database" });
+            }
 
             if (!req.file) {
                 return res.status(400).json({ message: "No photo uploaded" });
@@ -2254,11 +2330,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.get("/api/billing/subscription", isAuthenticatedToken, async (req: Request, res: Response): Promise<any> => {
         try {
             const userId = req.user?.userId;
+            console.log("🔍 Checking subscription for user:", userId);
+            
             const user = await storage.getUser(userId);
+            console.log("👤 User data:", {
+                id: user?.id,
+                stripeSubscriptionId: user?.stripeSubscriptionId,
+                subscriptionStatus: user?.subscriptionStatus,
+                usedInviteCode: user?.usedInviteCode
+            });
 
             // Check if user has a Stripe subscription
             if (user?.stripeSubscriptionId) {
+                console.log("💳 User has Stripe subscription ID:", user.stripeSubscriptionId);
+                try {
                 const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+                    console.log("✅ Retrieved Stripe subscription:", subscription.status);
 
                 res.json({
                     subscription: {
@@ -2279,9 +2366,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
                         })),
                     },
                 });
+                } catch (stripeError) {
+                    console.error("❌ Error retrieving Stripe subscription:", stripeError);
+                    // If Stripe subscription doesn't exist, update local status
+                    await storage.updateUserSubscriptionStatus(userId, 'inactive');
+                    await storage.updateUserStripeSubscriptionId(userId, '');
+                    return res.status(404).json({ message: "No active subscription found" });
+                }
             }
             // Check if user used an invite code and has active subscription
             else if (user?.usedInviteCode && user?.subscriptionStatus === 'active') {
+                console.log("🎫 User has invite access");
                 res.json({
                     subscription: {
                         id: 'invite-access',
@@ -2291,11 +2386,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     },
                 });
             }
+            // Check if user has active subscription status but no Stripe ID (webhook might have failed)
+            else if (user?.subscriptionStatus === 'active') {
+                console.log("✅ User has active subscription status");
+                res.json({
+                    subscription: {
+                        id: 'active-subscription',
+                        status: 'active',
+                        type: 'local',
+                        message: 'Active subscription (webhook processed)'
+                    },
+                });
+            }
             else {
+                console.log("❌ No active subscription found for user");
                 return res.status(404).json({ message: "No active subscription found" });
             }
         } catch (err: any) {
-            console.error("Subscription retrieval error:", err);
+            console.error("❌ Subscription retrieval error:", err);
             res.status(500).json({
                 message: "Failed to retrieve subscription",
                 error: err.message
@@ -2510,151 +2618,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Webhook handler for Stripe events
-    app.post("/api/billing/webhook", express.raw({ type: 'application/json' }), async (req: Request, res: Response): Promise<any> => {
-        console.log('🔔 Webhook received - Headers:', Object.keys(req.headers));
-        console.log('🔔 Webhook received - Body length:', req.body?.length);
-        console.log('🔔 Webhook received - Content-Type:', req.headers['content-type']);
-        
-        const sig = req.headers['stripe-signature'];
-        const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-        console.log('Webhook secret configured:', !!endpointSecret);
-        console.log('Webhook secret starts with:', endpointSecret?.substring(0, 10) + '...');
-        console.log('🔔 Stripe signature present:', !!sig);
-        console.log('🔔 Stripe signature starts with:', (sig as string)?.substring(0, 10) + '...');
-
-        if (!endpointSecret) {
-            console.error('STRIPE_WEBHOOK_SECRET is not configured');
-            res.status(500).json({ error: 'Webhook secret not configured' });
-            return;
-        }
-
-        if (!sig) {
-            console.error('No Stripe signature found in headers');
-            res.status(400).json({ error: 'No signature found' });
-            return;
-        }
-
-        let event: Stripe.Event;
-
-        try {
-            event = stripe.webhooks.constructEvent(req.body, sig as string, endpointSecret);
-            console.log('Webhook signature verification successful');
-        } catch (err: any) {
-            console.error('Webhook signature verification failed:', err.message);
-            console.error('Signature:', sig);
-            console.error('Body length:', req.body?.length);
-            console.error('Body preview:', req.body?.toString().substring(0, 200));
-            res.status(400).send(`Webhook Error: ${err.message}`);
-            return;
-        }
-
-        try {
-            console.log('🔔 Webhook received:', event.type, 'for event ID:', event.id);
-            
-            switch (event.type) {
-                case 'checkout.session.completed':
-                    const session = event.data.object as Stripe.Checkout.Session;
-                    console.log('✅ Checkout session completed:', session.id);
-                    console.log('📝 Session metadata:', session.metadata);
-                    console.log('📝 Session subscription:', session.subscription);
-                    console.log('👤 Session customer:', session.customer);
-
-                    if (session.subscription && session.customer) {
-                        const userId = session.metadata?.userId;
-                        console.log('🔍 Looking for userId in metadata:', userId);
-                        
-                        if (userId) {
-                            console.log('✅ Found userId, updating database for user:', userId);
-                            try {
-                                await storage.updateUserStripeCustomerId(userId, session.customer as string);
-                                await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
-                                await storage.updateUserSubscriptionStatus(userId, 'active');
-                                console.log('✅ Database updated successfully for user:', userId);
-                            } catch (dbError) {
-                                console.error('❌ Database update failed for user:', userId, 'Error:', dbError);
-                            }
-                        } else {
-                            console.log('❌ No userId found in session metadata');
-                        }
-                    } else {
-                        console.log('❌ Session missing subscription or customer');
-                        console.log('   Subscription:', session.subscription);
-                        console.log('   Customer:', session.customer);
-                    }
-                    break;
-
-                case 'customer.subscription.updated':
-                    const subscription = event.data.object as Stripe.Subscription;
-                    console.log('📝 Subscription updated:', subscription.id);
-                    console.log('📝 Subscription metadata:', subscription.metadata);
-
-                    const subUserId = subscription.metadata?.userId;
-                    if (subUserId) {
-                        console.log('✅ Updating subscription status for user:', subUserId, 'to:', subscription.status);
-                        try {
-                            await storage.updateUserSubscriptionStatus(subUserId, subscription.status);
-                        } catch (dbError) {
-                            console.error('❌ Database update failed for user:', subUserId, 'Error:', dbError);
-                        }
-                    } else {
-                        console.log('❌ No userId found in subscription metadata');
-                    }
-                    break;
-
-                case 'customer.subscription.deleted':
-                    const deletedSubscription = event.data.object as Stripe.Subscription;
-                    console.log('🗑️ Subscription deleted:', deletedSubscription.id);
-                    console.log('📝 Deleted subscription metadata:', deletedSubscription.metadata);
-
-                    const deletedUserId = deletedSubscription.metadata?.userId;
-                    if (deletedUserId) {
-                        console.log('✅ Updating subscription status for user:', deletedUserId, 'to: canceled');
-                        try {
-                            await storage.updateUserSubscriptionStatus(deletedUserId, 'canceled');
-                        } catch (dbError) {
-                            console.error('❌ Database update failed for user:', deletedUserId, 'Error:', dbError);
-                        }
-                    } else {
-                        console.log('❌ No userId found in deleted subscription metadata');
-                    }
-                    break;
-
-                case 'invoice.payment_succeeded':
-                    const invoice = event.data.object as Stripe.Invoice;
-                    console.log('💰 Invoice payment succeeded:', invoice.id);
-                    console.log('📝 Invoice metadata:', invoice.metadata);
-                    break;
-
-                case 'invoice.payment_failed':
-                    const failedInvoice = event.data.object as Stripe.Invoice;
-                    console.log('❌ Invoice payment failed:', failedInvoice.id);
-                    console.log('📝 Failed invoice metadata:', failedInvoice.metadata);
-
-                    const failedUserId = failedInvoice.metadata?.userId;
-                    if (failedUserId) {
-                        console.log('✅ Updating subscription status for user:', failedUserId, 'to: past_due');
-                        try {
-                            await storage.updateUserSubscriptionStatus(failedUserId, 'past_due');
-                        } catch (dbError) {
-                            console.error('❌ Database update failed for user:', failedUserId, 'Error:', dbError);
-                        }
-                    } else {
-                        console.log('❌ No userId found in failed invoice metadata');
-                    }
-                    break;
-
-                default:
-                    console.log(`ℹ️ Unhandled event type: ${event.type}`);
-            }
-
-            res.json({ received: true });
-        } catch (err: any) {
-            console.error('❌ Webhook handler error:', err);
-            res.status(500).json({ error: 'Webhook handler failed' });
-        }
-    });
+    // Webhook handler moved to /webhook endpoint in webhook.ts to avoid conflicts
+    // All webhook processing is now handled by the unified webhook handler
 
     // Manual webhook test endpoint for individual subscriptions (development/testing)
     app.post("/api/billing/test-subscription-webhook", async (req, res) => {
@@ -2805,6 +2770,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({ message: "Failed to activate subscription", error: errorMessage });
         }
     });
+
+    // Success page handler moved to /billing/success endpoint to avoid conflicts
 
     // Validate coupon
     app.post("/api/billing/validate-coupon", async (req: Request, res: Response): Promise<any> => {
@@ -3913,7 +3880,181 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
+    // ==================== Personal Info Management ====================== //
+
+    // Get personal info for a patient
+    app.get("/api/patients/:id/personal-info", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const info = await storage.getPersonalInfo(patientId);
+            res.json(info);
+        } catch (error) {
+            console.error("Error fetching personal info:", error);
+            res.status(500).json({ message: "Failed to fetch personal info" });
+        }
+    });
+
+    // Create or update personal info for a patient
+    app.post("/api/patients/:id/personal-info", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const { work, family, hobbies, food, other, createdBy } = req.body;
+
+            // Validate inputs
+            if (!createdBy) {
+                res.status(400).json({ message: "createdBy is required" });
+                return;
+            }
+
+            const personalInfoData = {
+                patientId,
+                work: work || "",
+                family: family || "",
+                hobbies: hobbies || "",
+                food: food || "",
+                other: other || "",
+                createdBy
+            };
+
+            const info = await storage.createOrUpdatePersonalInfo(personalInfoData);
+            res.json(info);
+        } catch (error) {
+            console.error("Error saving personal info:", error);
+            res.status(500).json({ message: "Failed to save personal info" });
+        }
+    });
+
+    // ==================== Dashboard Real-time Data ====================== //
+
+    // Get today's sessions count for a patient
+    app.get("/api/patients/:id/today-sessions", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const todaySessions = await storage.getTodaySessions(patientId);
+            res.json({ 
+                count: todaySessions.length,
+                sessions: todaySessions 
+            });
+        } catch (error) {
+            console.error("Error fetching today's sessions:", error);
+            res.status(500).json({ message: "Failed to fetch today's sessions" });
+        }
+    });
+
+    // Get recent activity for a patient (conversations and photo triggers)
+    app.get("/api/patients/:id/recent-activity", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            const recentActivity = await storage.getRecentActivity(patientId);
+            res.json(recentActivity);
+        } catch (error) {
+            console.error("Error fetching recent activity:", error);
+            res.status(500).json({ message: "Failed to fetch recent activity" });
+        }
+    });
+
+    // Get dashboard overview data (sessions count, photos count, recent activity)
+    app.get("/api/patients/:id/dashboard-overview", async (req, res) => {
+        try {
+            const patientId = parseInt(req.params.id);
+            if (isNaN(patientId)) {
+                res.status(400).json({ message: "Invalid patient ID" });
+                return;
+            }
+
+            // Get current user ID from the authorization token
+            const authHeader = req.headers.authorization;
+            let currentUserId: string | undefined;
+            
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                try {
+                    const token = authHeader.substring(7);
+                    const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+                    currentUserId = decoded.userId;
+                } catch (error) {
+                    console.error("Error decoding token:", error);
+                }
+            }
+
+            const [todaySessions, memoryPhotos, recentActivity] = await Promise.all([
+                storage.getTodaySessions(patientId),
+                storage.getMemoryPhotosByPatient(patientId, currentUserId),
+                storage.getRecentActivity(patientId)
+            ]);
+
+            res.json({
+                todaySessions: {
+                    count: todaySessions.length,
+                    sessions: todaySessions
+                },
+                memoryPhotos: {
+                    count: memoryPhotos.length,
+                    photos: memoryPhotos
+                },
+                recentActivity: recentActivity
+            });
+        } catch (error) {
+            console.error("Error fetching dashboard overview:", error);
+            res.status(500).json({ message: "Failed to fetch dashboard overview" });
+        }
+    });
+
     // ==================== Patient Management ====================== //
+
+    // Get user's associated patient ID
+    app.get("/api/user/patient", async (req, res) => {
+        try {
+            const authHeader = req.headers.authorization;
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                res.status(401).json({ message: "Authorization header required" });
+                return;
+            }
+
+            const token = authHeader.substring(7);
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+            const userId = decoded.userId;
+
+            if (!userId) {
+                res.status(401).json({ message: "Invalid token" });
+                return;
+            }
+
+            // First, try to find a patient associated with this user
+            const patient = await storage.getPatientByUserId(userId);
+            
+            if (patient) {
+                res.json({ patientId: patient.id });
+                return;
+            }
+
+            // If no patient exists, create a default patient for this user
+            const newPatient = await storage.createDefaultPatient(userId);
+            res.json({ patientId: newPatient.id });
+        } catch (error) {
+            console.error("Error getting user's patient:", error);
+            res.status(500).json({ message: "Failed to get user's patient" });
+        }
+    });
 
     // ==================== Billing Success/Cancel Pages ====================== //
 
@@ -3931,6 +4072,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             if (!session) {
                 return res.status(404).json({ message: "Session not found" });
+            }
+
+            // Process the subscription activation as a fallback (in case webhook failed)
+            if (session.subscription && session.customer && session.metadata?.userId) {
+                console.log('🔄 Processing subscription activation from success page for user:', session.metadata.userId);
+                try {
+                    await storage.updateUserStripeCustomerId(session.metadata.userId, session.customer as string);
+                    await storage.updateUserStripeSubscriptionId(session.metadata.userId, session.subscription as string);
+                    await storage.updateUserSubscriptionStatus(session.metadata.userId, 'active');
+                    console.log('✅ Success page: Database updated successfully for user:', session.metadata.userId);
+                } catch (dbError) {
+                    console.error('❌ Success page: Database update failed for user:', session.metadata.userId, 'Error:', dbError);
+                }
             }
 
             // Get customer details
@@ -4371,6 +4525,294 @@ export async function registerRoutes(app: Express): Promise<Server> {
             res.status(500).json({
                 message: "Failed to load cancel page",
                 error: err.message
+            });
+        }
+    });
+
+    // Manual activation endpoint for direct subscription activation
+    app.post("/api/billing/manual-activate", async (req, res) => {
+        try {
+            const { sessionId, userId } = req.body;
+
+            if (!sessionId || !userId) {
+                res.status(400).json({ message: "Session ID and User ID are required" });
+                return;
+            }
+
+            console.log('🔧 Manual activation for session:', sessionId, 'user:', userId);
+
+            // Retrieve the checkout session from Stripe
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+            console.log('✅ Retrieved session:', session.id, 'status:', session.status);
+
+            if (session.status === 'complete' && session.subscription && session.customer) {
+                console.log('✅ Session is complete with subscription and customer');
+
+                // Update the user's database record
+                try {
+                    await storage.updateUserStripeCustomerId(userId, session.customer as string);
+                    await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
+                    await storage.updateUserSubscriptionStatus(userId, 'active');
+
+                    console.log('✅ Database updated successfully for manual activation');
+
+                    res.json({ 
+                        message: "Subscription activated manually",
+                        sessionId: session.id,
+                        subscriptionId: session.subscription,
+                        customerId: session.customer,
+                        userId: userId,
+                        status: 'active'
+                    });
+                } catch (dbError) {
+                    console.error('❌ Database update failed during manual activation:', dbError);
+                    res.status(500).json({ 
+                        message: "Database update failed",
+                        error: dbError instanceof Error ? dbError.message : 'Unknown error'
+                    });
+                }
+            } else {
+                console.log('❌ Session not complete or missing subscription/customer');
+                res.status(400).json({ 
+                    message: "Session is not complete or missing subscription/customer",
+                    session: {
+                        id: session.id,
+                        status: session.status,
+                        subscription: session.subscription,
+                        customer: session.customer
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("❌ Error in manual activation:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to activate subscription", error: errorMessage });
+        }
+    });
+
+    // Quick fix endpoint - manually set user as active (for testing)
+    app.post("/api/billing/quick-fix", async (req, res) => {
+        try {
+            const { userId } = req.body;
+
+            if (!userId) {
+                res.status(400).json({ message: "User ID is required" });
+                return;
+            }
+
+            console.log('🔧 Quick fix for user:', userId);
+
+            // Update the user's database record to active
+            try {
+                await storage.updateUserSubscriptionStatus(userId, 'active');
+                console.log('✅ User subscription status set to active');
+
+                res.json({ 
+                    message: "User subscription status updated to active",
+                    userId: userId,
+                    status: 'active'
+                });
+            } catch (dbError) {
+                console.error('❌ Database update failed during quick fix:', dbError);
+                res.status(500).json({ 
+                    message: "Database update failed",
+                    error: dbError instanceof Error ? dbError.message : 'Unknown error'
+                });
+            }
+        } catch (error) {
+            console.error("❌ Error in quick fix:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to apply quick fix", error: errorMessage });
+        }
+    });
+
+    // Debug endpoint to get current user info
+    app.get("/api/billing/debug-user", isAuthenticatedToken, async (req, res) => {
+        try {
+            const userId = req.user?.id;
+            console.log('🔍 Debug user info for userId:', userId);
+            
+            if (!userId) {
+                return res.status(400).json({ message: "No user ID found in token" });
+            }
+
+            // Get user from database
+            const user = await storage.getUser(userId);
+            console.log('👤 User found:', user ? 'Yes' : 'No');
+            
+            if (user) {
+                console.log('📝 User details:', {
+                    id: user.id,
+                    email: user.email,
+                    subscriptionStatus: user.subscriptionStatus,
+                    stripeCustomerId: user.stripeCustomerId,
+                    stripeSubscriptionId: user.stripeSubscriptionId
+                });
+            }
+
+            res.json({
+                message: "User debug info",
+                userId: userId,
+                user: user ? {
+                    id: user.id,
+                    email: user.email,
+                    subscriptionStatus: user.subscriptionStatus,
+                    stripeCustomerId: user.stripeCustomerId,
+                    stripeSubscriptionId: user.stripeSubscriptionId
+                } : null
+            });
+        } catch (error) {
+            console.error("❌ Error in debug user:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            res.status(500).json({ message: "Failed to get user debug info", error: errorMessage });
+        }
+    });
+
+    // Admin route to show all users
+    app.get("/api/admin/users", async (req: Request, res: Response): Promise<any> => {
+        try {
+            console.log("Admin route - fetching all users");
+            
+            // Get all users from the database
+            const allUsers = await db.select().from(users).orderBy(users.createdAt);
+            
+            console.log(`Found ${allUsers.length} users in database`);
+            
+            // Format the response to show relevant user information
+            const formattedUsers = allUsers.map((user) => ({
+                id: user.id,
+                email: user.email,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                accountType: user.accountType,
+                role: user.role,
+                subscriptionStatus: user.subscriptionStatus,
+                isActive: user.isActive,
+                createdAt: user.createdAt,
+                updatedAt: user.updatedAt,
+                // Patient-specific fields
+                status: user.status,
+                roomNumber: user.roomNumber,
+                care_level: user.care_level,
+                // Family member fields
+                relationToPatient: user.relationToPatient,
+                patientAccessCode: user.patientAccessCode,
+                usedInviteCode: user.usedInviteCode
+            }));
+            
+            return res.status(200).json({ 
+                message: "All users retrieved successfully",
+                count: formattedUsers.length,
+                users: formattedUsers 
+            });
+        } catch (error: any) {
+            console.error("Error fetching all users:", error);
+            return res.status(500).json({ 
+                message: "Failed to fetch users", 
+                error: error.message 
+            });
+        }
+    });
+
+    // Admin route to show user details by ID
+    app.get("/api/admin/users/:userId", async (req: Request, res: Response): Promise<any> => {
+        try {
+            const userId = req.params.userId;
+            console.log("Admin route - fetching user details for:", userId);
+            
+            const user = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+            
+            if (user.length === 0) {
+                return res.status(404).json({ message: "User not found" });
+            }
+            
+            const userData = user[0];
+            
+            return res.status(200).json({ 
+                message: "User details retrieved successfully",
+                user: {
+                    id: userData.id,
+                    email: userData.email,
+                    firstName: userData.firstName,
+                    lastName: userData.lastName,
+                    accountType: userData.accountType,
+                    role: userData.role,
+                    subscriptionStatus: userData.subscriptionStatus,
+                    isActive: userData.isActive,
+                    createdAt: userData.createdAt,
+                    updatedAt: userData.updatedAt,
+                    // Patient-specific fields
+                    status: userData.status,
+                    roomNumber: userData.roomNumber,
+                    care_level: userData.care_level,
+                    medicalNotes: userData.medicalNotes,
+                    lastInteraction: userData.lastInteraction,
+                    admissionDate: userData.admissionDate,
+                    emergencyContact: userData.emergencyContact,
+                    emergencyPhone: userData.emergencyPhone,
+                    // Family member fields
+                    relationToPatient: userData.relationToPatient,
+                    patientAccessCode: userData.patientAccessCode,
+                    usedInviteCode: userData.usedInviteCode,
+                    // Billing fields
+                    stripeCustomerId: userData.stripeCustomerId,
+                    stripeSubscriptionId: userData.stripeSubscriptionId
+                }
+            });
+        } catch (error: any) {
+            console.error("Error fetching user details:", error);
+            return res.status(500).json({ 
+                message: "Failed to fetch user details", 
+                error: error.message 
+            });
+        }
+    });
+
+    // Admin route to show database statistics
+    app.get("/api/admin/stats", async (req: Request, res: Response): Promise<any> => {
+        try {
+            console.log("Admin route - fetching database statistics");
+            
+            // Get counts for different user types
+            const allUsers = await db.select().from(users);
+            const patients = allUsers.filter(u => u.accountType === 'Patient');
+            const familyMembers = allUsers.filter(u => u.accountType === 'Family Member');
+            const facilityStaff = allUsers.filter(u => u.accountType === 'Facility Staff');
+            
+            // Get subscription statistics
+            const activeSubscriptions = allUsers.filter(u => u.subscriptionStatus === 'active');
+            const inactiveSubscriptions = allUsers.filter(u => u.subscriptionStatus === 'inactive');
+            
+            // Get recent users (last 30 days)
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const recentUsers = allUsers.filter(u => u.createdAt && new Date(u.createdAt) > thirtyDaysAgo);
+            
+            return res.status(200).json({ 
+                message: "Database statistics retrieved successfully",
+                statistics: {
+                    totalUsers: allUsers.length,
+                    patients: patients.length,
+                    familyMembers: familyMembers.length,
+                    facilityStaff: facilityStaff.length,
+                    activeSubscriptions: activeSubscriptions.length,
+                    inactiveSubscriptions: inactiveSubscriptions.length,
+                    recentUsers: recentUsers.length,
+                    recentUsersList: recentUsers.map(u => ({
+                        id: u.id,
+                        email: u.email,
+                        firstName: u.firstName,
+                        lastName: u.lastName,
+                        accountType: u.accountType,
+                        createdAt: u.createdAt
+                    }))
+                }
+            });
+        } catch (error: any) {
+            console.error("Error fetching database statistics:", error);
+            return res.status(500).json({ 
+                message: "Failed to fetch database statistics", 
+                error: error.message 
             });
         }
     });

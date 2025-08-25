@@ -236,6 +236,19 @@ export const reminders = pgTable("reminders", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const personalInfo = pgTable("personal_info", {
+  id: serial("id").primaryKey(),
+  patientId: integer("patient_id").notNull().references(() => patients.id),
+  work: text("work"), // Work history / career
+  family: text("family"), // Family members & relationships
+  hobbies: text("hobbies"), // Hobbies & interests
+  food: text("food"), // Favorite foods
+  other: text("other"), // Other important details
+  createdBy: varchar("created_by").references(() => users.id), // Who created/updated this info
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Flat Payment Invite System Tables
 export const facilityInvitePackages = pgTable("facility_invite_packages", {
   id: serial("id").primaryKey(),
@@ -317,6 +330,12 @@ export const insertReminderSchema = createInsertSchema(reminders).omit({
   updatedAt: true,
 });
 
+export const insertPersonalInfoSchema = createInsertSchema(personalInfo).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Invite system insert schemas
 export const insertFacilityInvitePackageSchema = createInsertSchema(facilityInvitePackages).omit({
   id: true,
@@ -348,6 +367,8 @@ export type Medication = typeof medications.$inferSelect;
 export type InsertMedication = z.infer<(typeof insertMedicationSchema) & ZodType<any, any, any>>;
 export type Reminder = typeof reminders.$inferSelect;
 export type InsertReminder = z.infer<(typeof insertReminderSchema) & ZodType<any, any, any>>;
+export type PersonalInfo = typeof personalInfo.$inferSelect;
+export type InsertPersonalInfo = z.infer<(typeof insertPersonalInfoSchema) & ZodType<any, any, any>>;
 
 export type Session = typeof sessions.$inferSelect;
 export type InsertSession = z.infer<(typeof insertSessionSchema) & ZodType<any, any, any>>;

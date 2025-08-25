@@ -19,23 +19,30 @@ export function isAuthenticated(req: Request, res: Response, next: NextFunction)
 export function isAuthenticatedToken(req: Request, res: Response, next: NextFunction) {
   try {
     const authHeader = req.headers.authorization;
+    console.log("isAuthenticatedToken - Auth header:", authHeader ? authHeader.substring(0, 50) + "..." : "none");
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.log("isAuthenticatedToken - No valid auth header");
       return res.status(401).json({ message: "No token provided" });
     }
     
     const token = authHeader.substring(7); // Remove 'Bearer '
+    console.log("isAuthenticatedToken - Token:", token.substring(0, 50) + "...");
     
     try {
       const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
+      console.log("isAuthenticatedToken - Decoded token:", decoded);
       const userId = decoded.userId;
+      console.log("isAuthenticatedToken - Extracted userId:", userId);
       
       if (!userId) {
+        console.log("isAuthenticatedToken - No userId in token");
         return res.status(401).json({ message: "Invalid token" });
       }
       
       // Set user in request for other middleware/routes to use
       req.user = { userId: userId };
+      console.log("isAuthenticatedToken - Set req.user:", req.user);
       return next();
       
     } catch (tokenError) {

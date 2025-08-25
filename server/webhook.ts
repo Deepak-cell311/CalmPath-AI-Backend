@@ -45,6 +45,8 @@ export default async function webhookHandler(req: Request, res: Response) {
       console.log('✅ Checkout session completed:', session.id);
       console.log('📋 Session metadata:', session.metadata);
       console.log('📋 Payment intent:', session.payment_intent);
+      console.log('📋 Session subscription:', session.subscription);
+      console.log('👤 Session customer:', session.customer);
       
       // Check if this is an invite purchase
       if (session.metadata?.packageId && session.metadata?.facilityId) {
@@ -109,18 +111,98 @@ export default async function webhookHandler(req: Request, res: Response) {
           console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
           return res.status(500).json({ error: 'Failed to process invite purchase' });
         }
+      } 
+      // Handle regular subscription payments
+      else if (session.subscription && session.customer) {
+        console.log('💳 Processing regular subscription payment');
+        console.log('📝 Session metadata:', session.metadata);
+        console.log('📝 Session subscription:', session.subscription);
+        console.log('👤 Session customer:', session.customer);
+
+        const userId = session.metadata?.userId;
+        console.log('🔍 Looking for userId in metadata:', userId);
+        
+        if (userId) {
+          console.log('✅ Found userId, updating database for user:', userId);
+          try {
+            await storage.updateUserStripeCustomerId(userId, session.customer as string);
+            await storage.updateUserStripeSubscriptionId(userId, session.subscription as string);
+            await storage.updateUserSubscriptionStatus(userId, 'active');
+            console.log('✅ Database updated successfully for user:', userId);
+          } catch (dbError) {
+            console.error('❌ Database update failed for user:', userId, 'Error:', dbError);
+          }
+        } else {
+          console.log('❌ No userId found in session metadata');
+        }
       } else {
-        console.log('📦 Regular subscription payment - not an invite purchase');
+        console.log('📦 Unknown checkout session type - not an invite purchase or subscription');
         console.log('📋 Session metadata:', session.metadata);
+      }
+      break;
+
+    case 'customer.subscription.updated':
+      const subscription = event.data.object as Stripe.Subscription;
+      console.log('📝 Subscription updated:', subscription.id);
+      console.log('📝 Subscription metadata:', subscription.metadata);
+
+      const subUserId = subscription.metadata?.userId;
+      if (subUserId) {
+        console.log('✅ Updating subscription status for user:', subUserId, 'to:', subscription.status);
+        try {
+          await storage.updateUserSubscriptionStatus(subUserId, subscription.status);
+        } catch (dbError) {
+          console.error('❌ Database update failed for user:', subUserId, 'Error:', dbError);
+        }
+      } else {
+        console.log('❌ No userId found in subscription metadata');
+      }
+      break;
+
+    case 'customer.subscription.deleted':
+      const deletedSubscription = event.data.object as Stripe.Subscription;
+      console.log('🗑️ Subscription deleted:', deletedSubscription.id);
+      console.log('📝 Deleted subscription metadata:', deletedSubscription.metadata);
+
+      const deletedUserId = deletedSubscription.metadata?.userId;
+      if (deletedUserId) {
+        console.log('✅ Updating subscription status for user:', deletedUserId, 'to: canceled');
+        try {
+          await storage.updateUserSubscriptionStatus(deletedUserId, 'canceled');
+        } catch (dbError) {
+          console.error('❌ Database update failed for user:', deletedUserId, 'Error:', dbError);
+        }
+      } else {
+        console.log('❌ No userId found in deleted subscription metadata');
+      }
+      break;
+
+    case 'invoice.payment_succeeded':
+      const invoice = event.data.object as Stripe.Invoice;
+      console.log('💰 Invoice payment succeeded:', invoice.id);
+      console.log('📝 Invoice metadata:', invoice.metadata);
+      break;
+
+    case 'invoice.payment_failed':
+      const failedInvoice = event.data.object as Stripe.Invoice;
+      console.log('❌ Invoice payment failed:', failedInvoice.id);
+      console.log('📝 Failed invoice metadata:', failedInvoice.metadata);
+
+      const failedUserId = failedInvoice.metadata?.userId;
+      if (failedUserId) {
+        console.log('✅ Updating subscription status for user:', failedUserId, 'to: past_due');
+        try {
+          await storage.updateUserSubscriptionStatus(failedUserId, 'past_due');
+        } catch (dbError) {
+          console.error('❌ Database update failed for user:', failedUserId, 'Error:', dbError);
+        }
+      } else {
+        console.log('❌ No userId found in failed invoice metadata');
       }
       break;
 
     case 'invoice.paid':
       console.log('💰 Invoice paid');
-      break;
-
-    case 'customer.subscription.deleted':
-      console.log('❌ Subscription canceled');
       break;
 
     default:

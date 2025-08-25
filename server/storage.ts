@@ -28,6 +28,9 @@ import {
   reminders,
   type Reminder,
   type InsertReminder,
+  personalInfo,
+  type PersonalInfo,
+  type InsertPersonalInfo,
   facilityInvitePackages,
   type FacilityInvitePackage,
   type InsertFacilityInvitePackage,
@@ -37,6 +40,7 @@ import {
   facilityInvites,
   type FacilityInvite,
   type InsertFacilityInvite,
+  memoryPhotos,
 } from "../shared/schema";
 import { db } from "./db";
 import { eq, desc, sql, and } from "drizzle-orm";
@@ -51,7 +55,9 @@ export interface IStorage {
   // Patient operations
   getAllPatients(filters?: { userId?: string; facilityId?: string }): Promise<Patient[]>;
   getPatient(id: number): Promise<Patient | undefined>;
+  getPatientByUserId(userId: string): Promise<Patient | undefined>;
   createPatient(data: InsertPatient): Promise<Patient>;
+  createDefaultPatient(userId: string): Promise<Patient>;
   updatePatientStatus(id: number, status: string): Promise<Patient>;
   updatePatientInteraction(id: number): Promise<Patient>;
   deletePatient(id: number): Promise<boolean>;
@@ -80,6 +86,10 @@ export interface IStorage {
   getActiveRemindersForPatient(patientId: number): Promise<Reminder[]>;
   markReminderAsCompleted(id: number): Promise<void>;
   
+  // Personal info operations
+  getPersonalInfo(patientId: number): Promise<PersonalInfo | undefined>;
+  createOrUpdatePersonalInfo(data: InsertPersonalInfo): Promise<PersonalInfo>;
+  
   // Stripe-related methods
   updateUserStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void>;
   updateUserStripeSubscriptionId(userId: string, stripeSubscriptionId: string): Promise<void>;
@@ -99,6 +109,11 @@ export interface IStorage {
   getFacilityAvailableInvites(facilityId: string): Promise<FacilityInvite[]>;
   createFacilityInvites(facilityId: string, purchaseId: number, inviteCount: number): Promise<FacilityInvite[]>;
   useFacilityInvite(inviteCode: string, facilityId: string, userInfo: { email?: string; phone?: string; name?: string }): Promise<{ success: boolean; message?: string; facility?: Facility; user?: User; patient?: Patient }>;
+  
+  // Dashboard real-time data methods
+  getTodaySessions(patientId: number): Promise<any[]>;
+  getRecentActivity(patientId: number): Promise<any[]>;
+  getMemoryPhotosByPatient(patientId: number, currentUserId?: string): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -146,6 +161,24 @@ export class DatabaseStorage implements IStorage {
 
   async getPatient(id: number): Promise<Patient | undefined> {
     const [patient] = await db.select().from(patients).where(eq(patients.id, id));
+    return patient;
+  }
+
+  async getPatientByUserId(userId: string): Promise<Patient | undefined> {
+    const [patient] = await db.select().from(patients).where(eq(patients.userId, userId));
+    return patient;
+  }
+
+  async createDefaultPatient(userId: string): Promise<Patient> {
+    const [patient] = await db.insert(patients).values({
+      firstName: "Default Patient",
+      lastName: "User",
+      age: 0,
+      status: "ok",
+      care_level: "low",
+      isActive: true,
+      userId: userId
+    }).returning();
     return patient;
   }
 
@@ -296,6 +329,34 @@ export class DatabaseStorage implements IStorage {
 
   async markReminderAsCompleted(id: number): Promise<void> {
     await db.update(reminders).set({ isCompleted: true }).where(eq(reminders.id, id));
+  }
+
+  // Personal info operations
+  async getPersonalInfo(patientId: number): Promise<PersonalInfo | undefined> {
+    const [info] = await db.select().from(personalInfo).where(eq(personalInfo.patientId, patientId));
+    return info;
+  }
+
+  async createOrUpdatePersonalInfo(data: InsertPersonalInfo): Promise<PersonalInfo> {
+    // Check if personal info already exists for this patient
+    const existingInfo = await this.getPersonalInfo(data.patientId);
+    
+    if (existingInfo) {
+      // Update existing record
+      const [updatedInfo] = await db
+        .update(personalInfo)
+        .set({
+          ...data,
+          updatedAt: new Date()
+        })
+        .where(eq(personalInfo.patientId, data.patientId))
+        .returning();
+      return updatedInfo;
+    } else {
+      // Create new record
+      const [newInfo] = await db.insert(personalInfo).values(data).returning();
+      return newInfo;
+    }
   }
 
   // Stripe-related methods
@@ -538,6 +599,97 @@ export class DatabaseStorage implements IStorage {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return result;
+  }
+
+  // Dashboard real-time data methods
+  async getTodaySessions(patientId: number): Promise<any[]> {
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+    const sessions = await db
+      .select()
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.patientId, patientId),
+          sql`${conversations.timestamp} >= ${startOfDay}`,
+          sql`${conversations.timestamp} <= ${endOfDay}`
+        )
+      )
+      .orderBy(desc(conversations.timestamp));
+
+    return sessions;
+  }
+
+  async getRecentActivity(patientId: number): Promise<any[]> {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Get recent conversations
+    const recentConversations = await db
+      .select({
+        id: conversations.id,
+        type: sql`'conversation'`,
+        title: sql`'Conversation completed'`,
+        description: conversations.userMessage,
+        timestamp: conversations.timestamp,
+        sentiment: conversations.sentiment,
+        duration: conversations.duration
+      })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.patientId, patientId),
+          sql`${conversations.timestamp} >= ${sevenDaysAgo}`
+        )
+      )
+      .orderBy(desc(conversations.timestamp))
+      .limit(10);
+
+    // Get recent photo triggers (we'll simulate this for now since we don't have a photo_triggered table)
+    // In a real implementation, you'd have a table tracking when photos were shown to patients
+    const recentPhotoTriggers = await db
+      .select({
+        id: memoryPhotos.id,
+        type: sql`'photo_triggered'`,
+        title: sql`'Photo memory triggered'`,
+        description: memoryPhotos.description,
+        timestamp: memoryPhotos.createdAt,
+        photoName: memoryPhotos.photoname
+      })
+      .from(memoryPhotos)
+      .where(
+        and(
+          sql`${memoryPhotos.createdAt} >= ${sevenDaysAgo}`
+        )
+      )
+      .orderBy(desc(memoryPhotos.createdAt))
+      .limit(5);
+
+    // Combine and sort by timestamp
+    const allActivity = [...recentConversations, ...recentPhotoTriggers]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 10);
+
+    return allActivity;
+  }
+
+  async getMemoryPhotosByPatient(patientId: number, currentUserId?: string): Promise<any[]> {
+    // Since memory_photos table doesn't have patientId, we filter by uploadedBy
+    // to only show photos uploaded by the current user (family member)
+    if (!currentUserId) {
+      // If no currentUserId provided, return empty array
+      return [];
+    }
+
+    const photos = await db
+      .select()
+      .from(memoryPhotos)
+      .where(eq(memoryPhotos.uploadedBy, currentUserId))
+      .orderBy(desc(memoryPhotos.createdAt));
+
+    return photos;
   }
 }
 
