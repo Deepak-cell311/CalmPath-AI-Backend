@@ -23,12 +23,22 @@ const allowedOrigins = [
   "https://app.calmpath.ai",
   "https://calm-path-ai.vercel.app",
   "http://localhost:3000",
-  "https://calmpathfrontend-sid-production.up.railway.app"
+  "https://calmpathfrontend-sid-production.up.railway.app",
 ];
+
+function isAllowedOrigin(origin: string): boolean {
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow Railway/Vercel preview subdomains if needed
+  if (origin.endsWith(".up.railway.app")) return true;
+  if (origin.endsWith(".vercel.app")) return true;
+  return false;
+}
+
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback: any) {
     if (!origin) return callback(null, true); // allow no-origin (e.g., mobile apps or curl)
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    console.error("CORS blocked origin:", origin);
     return callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
