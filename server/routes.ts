@@ -381,12 +381,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Check sessions in database
     app.get("/api/debug/sessions-in-db", async (req, res) => {
         try {
-            const { Pool } = require('pg');
-            const pool = new Pool({
-                connectionString: process.env.DATABASE_URL,
-                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-            });
-
             const client = await pool.connect();
             const result = await client.query(`
                 SELECT sid, sess, expire 
@@ -396,7 +390,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `);
 
             client.release();
-            await pool.end();
 
             res.json({
                 sessionCount: result.rows.length,
@@ -450,43 +443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
-    // Check sessions in database
-    app.get("/api/debug/sessions-in-db", async (req, res) => {
-        try {
-            const { Pool } = require('pg');
-            const pool = new Pool({
-                connectionString: process.env.DATABASE_URL,
-                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-            });
 
-            const client = await pool.connect();
-            const result = await client.query(`
-                SELECT sid, sess, expire 
-                FROM auth_sessions 
-                ORDER BY expire DESC 
-                LIMIT 10
-            `);
-
-            client.release();
-            await pool.end();
-
-            res.json({
-                sessionCount: result.rows.length,
-                sessions: result.rows.map((row: any) => ({
-                    sid: row.sid,
-                    hasUser: !!row.sess?.user,
-                    userEmail: row.sess?.user?.email,
-                    expire: row.expire
-                }))
-            });
-        } catch (error: unknown) {
-            console.error('Error checking sessions in DB:', error);
-            res.status(500).json({
-                error: 'Failed to check sessions in DB',
-                details: error instanceof Error ? error.message : 'Unknown error'
-            });
-        }
-    });
 
     // Test user session storage
     app.post("/api/debug/test-user-session", (req, res) => {
