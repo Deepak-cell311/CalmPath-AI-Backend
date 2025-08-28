@@ -11,8 +11,10 @@
     "test-protocol": "node scripts/test-protocol.js",
     "test-real-protocol": "node scripts/test-real-protocol.js",
     "start": "node dist/server/index.js",
-    "db:generate": "drizzle-kit generate:pg",
-    "db:push": "drizzle-kit push:pg",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,7 +22,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@neondatabase/serverless": "^1.0.1",
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "connect-pg-simple": "^10.0.0",
@@ -34,9 +35,7 @@
     "multer": "^2.0.1",
     "openai": "^5.8.2",
     "pg": "^8.16.3",
-    "psql": "^0.0.1",
     "stripe": "^18.3.0",
-    "ws": "^8.18.3",
     "zod": "^3.25.67"
   },
   "devDependencies": {
@@ -47,7 +46,7 @@
     "@types/express-session": "^1.18.2",
     "@types/multer": "^1.4.13",
     "@types/node": "^24.0.7",
-    "@types/ws": "^8.18.1",
+    "@types/pg": "^8.11.10",
     "@vitejs/plugin-react": "^4.6.0",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",

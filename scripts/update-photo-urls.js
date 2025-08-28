@@ -1,6 +1,6 @@
-const { db } = require('../server/db');
-const { memoryPhotos } = require('../shared/schema');
-const { eq, like } = require('drizzle-orm');
+import { db } from '../server/db';
+import { memoryPhotos } from '../shared/schema';
+import { eq, like } from 'drizzle-orm';
 
 async function updatePhotoUrls() {
   try {
