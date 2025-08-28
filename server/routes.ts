@@ -171,12 +171,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const PgSession = connectPgSimple(session);
 
     console.log('Setting up session store with DATABASE_URL:', process.env.DATABASE_URL ? 'Present' : 'Missing');
+    if (process.env.DATABASE_URL) {
+        // Mask the password for security
+        const maskedUrl = process.env.DATABASE_URL.replace(/:\/\/[^:]+:[^@]+@/, '://***:***@');
+        console.log('Session store connection URL:', maskedUrl);
+    }
 
     // Create session store with error handling
     const sessionStore = new PgSession({
         conObject: {
             connectionString: process.env.DATABASE_URL,
-            ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+            ssl: false, // Explicitly set SSL to false for Supabase
+            max: 10,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 2000,
         },
         tableName: 'auth_sessions',
         createTableIfMissing: true,
@@ -2254,7 +2262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // ===================== Stripe routes ===================== //
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-        apiVersion: '2025-06-30.basil',
+        apiVersion: '2025-08-27.basil',
     });
 
     // Create Checkout Session
@@ -4825,7 +4833,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Add debug endpoint to check environment variables
     app.get('/debug/env', (req, res) => {
+        const allEnvVars: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(process.env)) {
+            if (key.toLowerCase().includes('database') || key.toLowerCase().includes('db') || key.toLowerCase().includes('neon')) {
+                if (value && typeof value === 'string' && value.includes('://')) {
+                    // Mask passwords in URLs
+                    allEnvVars[key] = value.replace(/:\/\/[^:]+:[^@]+@/, '://***:***@');
+                } else {
+                    allEnvVars[key] = value;
+                }
+            }
+        }
+        
         res.json({
+            database_variables: allEnvVars,
             DATABASE_URL: process.env.DATABASE_URL ? 'Set' : 'Not set',
             NEON_DATABASE_URL: process.env.NEON_DATABASE_URL ? 'Set' : 'Not set',
             NODE_ENV: process.env.NODE_ENV,
