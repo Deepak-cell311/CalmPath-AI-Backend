@@ -150,7 +150,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'https://app.calmpath.ai',
         'http://localhost:3000',
         'https://calm-path-ai.vercel.app',
-        'https://calmpathfrontend-sid-production.up.railway.app'
+        'https://calmpathfrontend-sid-production.up.railway.app',
+        'https://calmpathfrontend-sid-production-385e.up.railway.app'
     ];
 
     app.use(cors({

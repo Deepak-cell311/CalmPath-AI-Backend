@@ -24,6 +24,7 @@ const allowedOrigins = [
   "https://calm-path-ai.vercel.app",
   "http://localhost:3000",
   "https://calmpathfrontend-sid-production.up.railway.app",
+  'https://calmpathfrontend-sid-production-385e.up.railway.app'
 ];
 
 function isAllowedOrigin(origin: string): boolean {
