@@ -381,6 +381,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Check sessions in database
     app.get("/api/debug/sessions-in-db", async (req, res) => {
         try {
+            const { Pool } = require('pg');
+            const pool = new Pool({
+                connectionString: process.env.DATABASE_URL,
+                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+            });
+
             const client = await pool.connect();
             const result = await client.query(`
                 SELECT sid, sess, expire 
@@ -390,6 +396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             `);
 
             client.release();
+            await pool.end();
 
             res.json({
                 sessionCount: result.rows.length,
@@ -443,7 +450,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
     });
 
+    // Check sessions in database
+    app.get("/api/debug/sessions-in-db", async (req, res) => {
+        try {
+            const { Pool } = require('pg');
+            const pool = new Pool({
+                connectionString: process.env.DATABASE_URL,
+                ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+            });
 
+            const client = await pool.connect();
+            const result = await client.query(`
+                SELECT sid, sess, expire 
+                FROM auth_sessions 
+                ORDER BY expire DESC 
+                LIMIT 10
+            `);
+
+            client.release();
+            await pool.end();
+
+            res.json({
+                sessionCount: result.rows.length,
+                sessions: result.rows.map((row: any) => ({
+                    sid: row.sid,
+                    hasUser: !!row.sess?.user,
+                    userEmail: row.sess?.user?.email,
+                    expire: row.expire
+                }))
+            });
+        } catch (error: unknown) {
+            console.error('Error checking sessions in DB:', error);
+            res.status(500).json({
+                error: 'Failed to check sessions in DB',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
 
     // Test user session storage
     app.post("/api/debug/test-user-session", (req, res) => {
@@ -2219,7 +2262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // ===================== Stripe routes ===================== //
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-        apiVersion: '2025-08-27.basil',
+        apiVersion: '2025-06-30.basil',
     });
 
     // Create Checkout Session
@@ -4790,20 +4833,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // Add debug endpoint to check environment variables
     app.get('/debug/env', (req, res) => {
-        const allEnvVars: Record<string, string | undefined> = {};
-        for (const [key, value] of Object.entries(process.env)) {
-            if (key.toLowerCase().includes('database') || key.toLowerCase().includes('db') || key.toLowerCase().includes('neon')) {
-                if (value && typeof value === 'string' && value.includes('://')) {
-                    // Mask passwords in URLs
-                    allEnvVars[key] = value.replace(/:\/\/[^:]+:[^@]+@/, '://***:***@');
-                } else {
-                    allEnvVars[key] = value;
-                }
-            }
-        }
-        
         res.json({
-            database_variables: allEnvVars,
             DATABASE_URL: process.env.DATABASE_URL ? 'Set' : 'Not set',
             NEON_DATABASE_URL: process.env.NEON_DATABASE_URL ? 'Set' : 'Not set',
             NODE_ENV: process.env.NODE_ENV,
