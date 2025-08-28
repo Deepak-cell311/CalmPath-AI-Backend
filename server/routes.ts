@@ -39,7 +39,7 @@ import {
 } from "../shared/schema";
 import { Methods } from "openai/resources/fine-tuning/methods";
 import { randomUUID } from "crypto";
-import { db } from "./db";
+import { db, pool } from "./db";
 import cors from "cors";
 
 // Helper function to determine the correct protocol
@@ -4819,6 +4819,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return res.status(500).json({ 
                 message: "Failed to fetch database statistics", 
                 error: error.message 
+            });
+        }
+    });
+
+    // Add debug endpoint to check environment variables
+    app.get('/debug/env', (req, res) => {
+        res.json({
+            DATABASE_URL: process.env.DATABASE_URL ? 'Set' : 'Not set',
+            NEON_DATABASE_URL: process.env.NEON_DATABASE_URL ? 'Set' : 'Not set',
+            NODE_ENV: process.env.NODE_ENV,
+            timestamp: new Date().toISOString()
+        });
+    });
+
+    // Add database connection test endpoint
+    app.get('/debug/db', async (req, res) => {
+        try {
+            const result = await pool.query('SELECT NOW() as current_time, version() as db_version');
+            res.json({
+                success: true,
+                current_time: result.rows[0].current_time,
+                db_version: result.rows[0].db_version,
+                connection_string: process.env.DATABASE_URL ? 'Set' : 'Not set'
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                connection_string: process.env.DATABASE_URL ? 'Set' : 'Not set'
             });
         }
     });
